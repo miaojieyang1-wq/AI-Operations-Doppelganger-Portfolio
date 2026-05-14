@@ -1,0 +1,25 @@
+app:
+  name: "oz的AI运营分身"
+  page_title: "oz的 AI 运营分身"
+  page_icon: "🎮"
+
+model:
+  provider: "deepseek"
+  default_model: "deepseek-chat"
+  default_base_url: "https://api.deepseek.com"
+  default_temperature: 0.7
+  collaboration_role_temperature: 0.6
+  collaboration_coordinator_temperature: 0.5
+  connection_test_temperature: 0
+
+paths:
+  works: "works"
+  reports: "reports"
+  activity_plans: "activity_plans"
+  static: "static"
+  entry_image: "static/nkx.png"
+  entry_image_fast: "static/nkx_entry.webp"
+  collaboration_reports: "reports/collaboration"
+
+admin:
+  password_hash_env: "AI_OPS_ADMIN_PASSWORD_HASH"

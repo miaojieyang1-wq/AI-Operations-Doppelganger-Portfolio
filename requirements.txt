@@ -1,0 +1,10 @@
+streamlit
+openai
+python-dotenv
+langgraph
+scikit-learn
+matplotlib
+PyYAML
+fastapi
+uvicorn
+SQLAlchemy
