@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -15,6 +16,9 @@ import api_runtime
 import rag_engine
 from collaboration_config import COLLABORATION_ROLES
 from config_loader import get_agent_prompt, get_system_prompt
+
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -71,6 +75,7 @@ class Orchestrator:
             content = rag_engine.query_rag(user_question, system_prompt)
             return {"success": True, "content": content, "error": ""}
         except Exception as exc:
+            logger.exception("RAG query failed")
             return {"success": False, "content": "", "error": str(exc)}
 
     def run_chat(
@@ -92,6 +97,7 @@ class Orchestrator:
                 "error": "",
             }
         except Exception as exc:
+            logger.exception("Agent chat failed: session_id=%s", session_id)
             return {
                 "success": False,
                 "content": "",
@@ -118,6 +124,7 @@ class Orchestrator:
                 "error": "",
             }
         except Exception as exc:
+            logger.exception("Agent task failed: task_key=%s", task_key)
             return {
                 "success": False,
                 "content": "",
@@ -170,6 +177,7 @@ class Orchestrator:
                 "error": "",
             }
         except Exception as exc:
+            logger.exception("Collaboration role failed: role_key=%s", role.get("key", "unknown"))
             return {
                 "role": role,
                 "content": "该视角分析生成失败",
@@ -237,6 +245,7 @@ class Orchestrator:
                     temperature=self.coordinator_temperature,
                 )
             except Exception as exc:
+                logger.exception("Collaboration coordinator failed")
                 coordinator_error = str(exc)
                 coordinator_result = "综合建议生成失败，请手动整合各职能观点"
 

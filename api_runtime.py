@@ -27,6 +27,22 @@ APP_CONFIG = config_loader.load_app_config()
 DEFAULT_MODEL = APP_CONFIG["model"]["default_model"]
 DEFAULT_BASE_URL = APP_CONFIG["model"]["default_base_url"]
 DEFAULT_TEMPERATURE = float(APP_CONFIG["model"]["default_temperature"])
+CONNECT_TIMEOUT_SECONDS = float(APP_CONFIG["model"].get("connect_timeout_seconds", 5))
+READ_TIMEOUT_SECONDS = float(APP_CONFIG["model"].get("read_timeout_seconds", 30))
+MAX_RETRIES = int(APP_CONFIG["model"].get("max_retries", 2))
+
+
+def create_api_timeout():
+    """创建外部 API 超时配置，避免模型调用长时间卡住。"""
+    import httpx
+
+    return httpx.Timeout(
+        timeout=READ_TIMEOUT_SECONDS,
+        connect=CONNECT_TIMEOUT_SECONDS,
+        read=READ_TIMEOUT_SECONDS,
+        write=READ_TIMEOUT_SECONDS,
+        pool=CONNECT_TIMEOUT_SECONDS,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -54,7 +70,12 @@ def create_client():
 
     from openai import OpenAI
 
-    return OpenAI(api_key=config["api_key"], base_url=config["base_url"])
+    return OpenAI(
+        api_key=config["api_key"],
+        base_url=config["base_url"],
+        timeout=create_api_timeout(),
+        max_retries=MAX_RETRIES,
+    )
 
 
 def call_chat_completion(messages: list[dict[str, str]], temperature: float | None = None) -> str:
@@ -78,7 +99,12 @@ def test_connection(api_key: str, base_url: str, model_name: str) -> tuple[bool,
     """用指定配置发起一次极短连接测试。"""
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url=base_url.rstrip("/"))
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url.rstrip("/"),
+        timeout=create_api_timeout(),
+        max_retries=MAX_RETRIES,
+    )
     response = client.chat.completions.create(
         model=model_name,
         messages=[

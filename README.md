@@ -84,13 +84,25 @@ python install.py
 
 ## 自检
 
-上传或交付前建议运行：
+首次运行前，建议先检查环境：
+
+```bash
+python check_env.py
+```
+
+每次修改后，可以先跑冒烟测试：
+
+```bash
+python smoke_test.py
+```
+
+上传或交付前建议运行完整自检：
 
 ```bash
 python health_check.py
 ```
 
-它会检查语法、提示词配置、文本编码、核心模块和首页入口。
+完整自检会检查语法、提示词配置、文本编码、核心模块和首页入口。
 
 ## 说明
 

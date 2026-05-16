@@ -1,0 +1,30 @@
+# API 入口代码优化审查
+
+## 修改范围
+
+- `api.py`
+- `CHANGELOG.md`
+
+## 优化内容
+
+1. 将多个 API 端点重复的“调用业务方法、判断是否保存、追加保存状态”流程抽取为 `run_endpoint_with_persistence`。
+2. 将认证模式、持久化环境变量名、默认 API 用户名等重复字符串抽为常量。
+3. 将报告持久化失败从静默吞掉改为记录日志，同时保持接口返回不被保存失败阻断。
+
+## 影响评估
+
+- 不改变任何 API 路径、请求体字段或返回字段。
+- 不改变默认不落盘行为。
+- 不改变 `persist=True` 且 `AI_OPS_API_PERSISTENCE=1` 时才保存的显式持久化规则。
+
+## 回归测试
+
+- `.python-core/python.exe -m py_compile api.py`：通过
+- `.python-core/python.exe smoke_test.py`：通过
+- `.python-core/python.exe health_check.py`：通过
+- `.python-core/python.exe -c "from api import app; print(app.title)"`：通过
+
+## 残余风险
+
+- 本轮没有重构 `core.py` 或 Streamlit 前端，避免扩大影响面。
+- `api.py` 仍然是轻量 API 适配层，后续如继续扩展接口，可考虑把持久化适配拆到独立模块。

@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 from pathlib import Path
 from functools import lru_cache
@@ -10,6 +11,7 @@ from build_index import CHROMA_DIR, LOCAL_VECTORSTORE_FILE, encode_query, get_em
 
 DEFAULT_MODEL = api_runtime.DEFAULT_MODEL
 DEFAULT_BASE_URL = api_runtime.DEFAULT_BASE_URL
+logger = logging.getLogger(__name__)
 
 
 def create_deepseek_client():
@@ -35,7 +37,7 @@ def load_vectorstore_by_signature(file_mtime_ns: int, file_size: int):
         get_embedding_model()
         return json.loads(LOCAL_VECTORSTORE_FILE.read_text(encoding="utf-8"))
     except Exception as exc:
-        print(f"提示：向量数据库暂时无法加载，将暂时使用普通回答模式。原因：{exc}")
+        logger.warning("向量数据库暂时无法加载，将使用普通回答模式：%s", exc)
         return None
 
 
@@ -44,7 +46,7 @@ def load_vectorstore():
     api_runtime.ensure_env_loaded()
 
     if not LOCAL_VECTORSTORE_FILE.exists():
-        print("提示：还没有找到 chroma_db/ 文件夹，将暂时使用普通回答模式。")
+        logger.info("未找到本地知识库索引，将使用普通回答模式。")
         return None
 
     stat = LOCAL_VECTORSTORE_FILE.stat()
@@ -97,7 +99,7 @@ def query_rag(user_question: str, system_prompt: str) -> str:
         question_embedding = encode_query(user_question)
         retrieved_chunks = retrieve_top_chunks(vectorstore, question_embedding, top_k=3)
     except Exception as exc:
-        print(f"提示：作品集检索暂时不可用，将暂时使用普通回答模式。原因：{exc}")
+        logger.warning("作品集检索暂时不可用，将使用普通回答模式：%s", exc)
         return call_deepseek_api(system_prompt, user_question)
 
     context_text = "\n\n---\n\n".join(chunk for chunk in retrieved_chunks if chunk)

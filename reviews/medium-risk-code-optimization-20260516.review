@@ -1,0 +1,32 @@
+# 中风险代码优化审查
+
+## 修改范围
+
+- `app.py`
+- `core.py`
+- `rag_engine.py`
+- `CHANGELOG.md`
+
+## 修改内容
+
+1. `app.py` 的版本分析提示词加载改为优先读取 `config/prompts/modules/version_analysis.yaml`，避免界面内嵌提示词与配置中心内容分叉。
+2. 清理版本分析和竞品雷达流程中的无用临时变量，降低后续维护噪音。
+3. `core.py` 在 Agent 聊天、任务调用、RAG 调用、协作角色和协调者失败时记录异常日志，但保留原有兜底返回结构。
+4. `rag_engine.py` 将运行时降级提示从 `print` 改为日志记录，避免后台运行时输出混乱，同时保留普通问答兜底。
+
+## 影响评估
+
+- 不改变前端入口、按钮、Tab 或用户可见功能路径。
+- 不改变 LangGraph、RAG、DeepSeek 调用的输入输出结构。
+- 不改变“失败时友好兜底”的原有行为。
+- 版本分析提示词以 YAML 为优先数据源，更符合配置中心化目标。
+
+## 回归测试
+
+- `.python-core/python.exe -m py_compile app.py core.py rag_engine.py api.py`：通过
+- `.python-core/python.exe smoke_test.py`：通过
+
+## 残余风险
+
+- `app.py` 仍存在多个超过 100 行的 UI 函数。本轮未继续拆分，避免在未做浏览器回归的情况下改变页面状态流。
+- 后续若继续中风险优化，建议优先拆分 `render_version_decision`、`render_user_insight`、`render_activity_workshop`。

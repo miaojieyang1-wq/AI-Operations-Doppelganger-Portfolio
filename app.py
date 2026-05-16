@@ -41,6 +41,7 @@ ORIGINAL_API_ENV = {
     "DEEPSEEK_BASE_URL": os.getenv("DEEPSEEK_BASE_URL", ""),
     "DEEPSEEK_MODEL": os.getenv("DEEPSEEK_MODEL", ""),
 }
+API_SESSION_KEYS = ("user_api_key", "user_api_base_url", "user_api_model")
 
 APP_CONFIG = config_loader.load_app_config()
 PROJECT_DIR = config_loader.PROJECT_DIR
@@ -183,6 +184,16 @@ def read_system_prompt_by_signature(file_path_text: str, file_mtime_ns: int, fil
 def read_prompt_file(prompt_id: str, fallback_prompt: str) -> str:
     """读取指定功能的 YAML 系统提示词；失败时使用代码内置兜底提示。"""
     return config_loader.get_system_prompt(prompt_id, fallback_prompt)
+
+
+def get_version_analysis_prompt() -> str:
+    """读取版本分析提示词，优先使用配置中心内容。"""
+    fallback_prompt = """
+你是一名游戏版本运营决策分析助手。请基于用户粘贴的版本公告，输出六模块分析报告。
+必须包含：版本内容拆解、卖点矩阵、宣发文案、内容效果预判、音乐专业分析、宣发节奏建议、后续追踪建议和数据源声明。
+模块之间用分隔线分开，结论要具体，不要空泛；如果缺少历史基准或投放数据，请明确写出需要补充哪些数据，不要编造具体内部数值。
+"""
+    return read_prompt_file("modules/version_analysis", fallback_prompt)
 
 
 @lru_cache(maxsize=32)
@@ -509,6 +520,7 @@ def create_deepseek_client():
 
 def run_agent_graph(agent_input: str, messages: list[dict[str, str]] | None = None) -> tuple[str, str]:
     """通过 core.Orchestrator 调用 LangGraph 聊天流程。"""
+    sync_session_api_config_to_env()
     result = ORCHESTRATOR.run_chat(agent_input, session_id="streamlit", messages=messages)
     if not result.get("success"):
         raise RuntimeError(result.get("error") or "LangGraph 调用失败")
@@ -516,10 +528,23 @@ def run_agent_graph(agent_input: str, messages: list[dict[str, str]] | None = No
 
 def run_agent_task(task_key: str, user_content: str, system_prompt: str = "") -> str:
     """通过 core.Orchestrator 调用 LangGraph 指定任务。"""
+    sync_session_api_config_to_env()
     result = ORCHESTRATOR.run_task(task_key, user_content, system_prompt)
     if not result.get("success"):
         raise RuntimeError(result.get("error") or f"{task_key} 调用失败")
     return result.get("content", "")
+
+
+def get_user_friendly_generation_error(error_text: str) -> str:
+    """把底层模型错误转成用户可理解的提示。"""
+    lowered = error_text.lower()
+    if "authentication" in lowered or "invalid" in lowered or "401" in lowered:
+        st.session_state.user_api_connected = False
+        st.session_state.user_api_status_message = "当前 API Key 验证失败，请重新连接 API 或开启演示模式。"
+        return "当前 API Key 验证失败。请在侧边栏重新连接可用的 API，或开启演示模式后再生成。"
+    if "api key" in lowered and ("没有" in error_text or "missing" in lowered):
+        return "当前还没有可用的 API Key。请在侧边栏连接 API，或开启演示模式体验本地预设结果。"
+    return "非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试"
 
 def get_agent_last_intent() -> str:
     """读取最近一次意图；未加载 LangGraph 时返回空值。"""
@@ -1066,91 +1091,106 @@ def render_runtime_status() -> None:
                 st.warning("工作流图生成失败")
 
 
-def render_api_connection_panel() -> None:
-    """侧边栏 API 连接面板：允许用户在网页内临时接入自己的 API。"""
+def init_api_connection_state() -> None:
+    """初始化侧边栏 API 连接状态。"""
     sync_session_api_config_to_env()
     if "user_api_base_url" not in st.session_state:
         st.session_state.user_api_base_url = os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL)
     if "user_api_model" not in st.session_state:
         st.session_state.user_api_model = os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL)
     if "user_api_connected" not in st.session_state:
-        st.session_state.user_api_connected = bool(os.getenv("DEEPSEEK_API_KEY"))
+        st.session_state.user_api_connected = False
     if "user_api_status_message" not in st.session_state:
-        st.session_state.user_api_status_message = ""
+        if os.getenv("DEEPSEEK_API_KEY"):
+            st.session_state.user_api_status_message = "已检测到本地 API Key，但尚未完成本次会话校验。请点击“连接 API”验证后再实时生成。"
+        else:
+            st.session_state.user_api_status_message = ""
 
+
+def render_api_connection_inputs() -> tuple[str, str, str, bool, bool]:
+    """渲染 API 表单并返回输入值与按钮状态。"""
+    api_key = st.text_input(
+        "API Key",
+        value=st.session_state.get("user_api_key", ""),
+        type="password",
+        placeholder="请输入您的 DeepSeek API Key",
+        help="用于实时生成回答。当前会话内生效，刷新后如未保存到环境变量，需要重新填写。",
+        key="api_key_input",
+    )
+    base_url = st.text_input("接口地址", value=st.session_state.user_api_base_url, placeholder=DEFAULT_BASE_URL, key="api_base_url_input")
+    model_name = st.text_input("模型名称", value=st.session_state.user_api_model, placeholder=DEFAULT_MODEL, key="api_model_input")
+    col_connect, col_clear = st.columns(2)
+    with col_connect:
+        connect_clicked = st.button("连接 API", use_container_width=True)
+    with col_clear:
+        clear_clicked = st.button("清除配置", use_container_width=True)
+    return api_key, base_url, model_name, connect_clicked, clear_clicked
+
+
+def connect_user_api(api_key: str, base_url: str, model_name: str) -> None:
+    """校验并接入用户当前会话 API 配置。"""
+    api_key = api_key.strip()
+    base_url = (base_url.strip() or DEFAULT_BASE_URL).rstrip("/")
+    model_name = model_name.strip() or DEFAULT_MODEL
+    if not api_key:
+        st.session_state.user_api_connected = False
+        st.session_state.user_api_status_message = "请先填写 API Key。"
+        return
+    try:
+        ok, message = test_deepseek_connection(api_key, base_url, model_name)
+        st.session_state.user_api_key = api_key
+        st.session_state.user_api_base_url = base_url
+        st.session_state.user_api_model = model_name
+        st.session_state.user_api_connected = ok
+        st.session_state.user_api_status_message = f"连接成功：{message}"
+        sync_session_api_config_to_env()
+    except Exception as exc:
+        st.session_state.user_api_connected = False
+        st.session_state.user_api_status_message = f"连接失败：{exc}"
+
+
+def clear_user_api_config() -> None:
+    """清除当前会话 API 配置，并恢复启动时环境变量。"""
+    for key in API_SESSION_KEYS:
+        st.session_state.pop(key, None)
+    for key, original_value in ORIGINAL_API_ENV.items():
+        if original_value:
+            os.environ[key] = original_value
+        else:
+            os.environ.pop(key, None)
+    st.session_state.user_api_base_url = os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL)
+    st.session_state.user_api_model = os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL)
+    st.session_state.user_api_connected = False
+    st.session_state.user_api_status_message = "已清除当前会话中的 API 配置。"
+
+
+def render_api_connection_status() -> None:
+    """展示当前 API 连接状态。"""
+    current_config = get_effective_api_config()
+    if st.session_state.user_api_connected:
+        st.success(f"已连接：{mask_api_key(current_config['api_key'])}")
+    elif st.session_state.user_api_status_message:
+        st.warning(st.session_state.user_api_status_message)
+        if current_config.get("api_key"):
+            st.caption(f"当前检测到的 Key：{mask_api_key(current_config['api_key'])}")
+    else:
+        st.info("未连接时，将使用本地 .env 中已有配置；如果也没有配置，实时生成会提示连接失败。")
+    if st.session_state.user_api_status_message and st.session_state.user_api_connected:
+        st.caption(st.session_state.user_api_status_message)
+    st.caption(f"当前模型：{current_config['model']}")
+
+
+def render_api_connection_panel() -> None:
+    """侧边栏 API 连接面板：允许用户在网页内临时接入自己的 API。"""
+    init_api_connection_state()
     with st.expander("🔑 连接我的 API", expanded=not st.session_state.user_api_connected):
         st.caption("这里的配置只保存在当前网页会话中。开启演示模式时，我会继续读取本地演示结果，不会调用 API。")
-        api_key = st.text_input(
-            "API Key",
-            value=st.session_state.get("user_api_key", ""),
-            type="password",
-            placeholder="请输入您的 DeepSeek API Key",
-            help="用于实时生成回答。当前会话内生效，刷新后如未保存到环境变量，需要重新填写。",
-            key="api_key_input",
-        )
-        base_url = st.text_input(
-            "接口地址",
-            value=st.session_state.user_api_base_url,
-            placeholder=DEFAULT_BASE_URL,
-            key="api_base_url_input",
-        )
-        model_name = st.text_input(
-            "模型名称",
-            value=st.session_state.user_api_model,
-            placeholder=DEFAULT_MODEL,
-            key="api_model_input",
-        )
-
-        col_connect, col_clear = st.columns(2)
-        with col_connect:
-            connect_clicked = st.button("连接 API", use_container_width=True)
-        with col_clear:
-            clear_clicked = st.button("清除配置", use_container_width=True)
-
+        api_key, base_url, model_name, connect_clicked, clear_clicked = render_api_connection_inputs()
         if connect_clicked:
-            api_key = api_key.strip()
-            base_url = (base_url.strip() or DEFAULT_BASE_URL).rstrip("/")
-            model_name = model_name.strip() or DEFAULT_MODEL
-            if not api_key:
-                st.session_state.user_api_connected = False
-                st.session_state.user_api_status_message = "请先填写 API Key。"
-            else:
-                try:
-                    ok, message = test_deepseek_connection(api_key, base_url, model_name)
-                    st.session_state.user_api_key = api_key
-                    st.session_state.user_api_base_url = base_url
-                    st.session_state.user_api_model = model_name
-                    st.session_state.user_api_connected = ok
-                    st.session_state.user_api_status_message = f"连接成功：{message}"
-                    sync_session_api_config_to_env()
-                except Exception as exc:
-                    st.session_state.user_api_connected = False
-                    st.session_state.user_api_status_message = f"连接失败：{exc}"
-
+            connect_user_api(api_key, base_url, model_name)
         if clear_clicked:
-            for key in ["user_api_key", "user_api_base_url", "user_api_model"]:
-                st.session_state.pop(key, None)
-            for key, original_value in ORIGINAL_API_ENV.items():
-                if original_value:
-                    os.environ[key] = original_value
-                else:
-                    os.environ.pop(key, None)
-            st.session_state.user_api_base_url = os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL)
-            st.session_state.user_api_model = os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL)
-            st.session_state.user_api_connected = bool(os.getenv("DEEPSEEK_API_KEY"))
-            st.session_state.user_api_status_message = "已清除当前会话中的 API 配置。"
-
-        current_config = get_effective_api_config()
-        if st.session_state.user_api_connected:
-            st.success(f"已连接：{mask_api_key(current_config['api_key'])}")
-        elif st.session_state.user_api_status_message:
-            st.warning(st.session_state.user_api_status_message)
-        else:
-            st.info("未连接时，将使用本地 .env 中已有配置；如果也没有配置，实时生成会提示连接失败。")
-
-        if st.session_state.user_api_status_message and st.session_state.user_api_connected:
-            st.caption(st.session_state.user_api_status_message)
-        st.caption(f"当前模型：{current_config['model']}")
+            clear_user_api_config()
+        render_api_connection_status()
 
 
 def render_sidebar() -> str:
@@ -2062,8 +2102,69 @@ def switch_to_workspace(main_mode: str, insight_tab: str = "", version_tab: str 
     st.rerun()
 
 
-def render_decision_dashboard() -> None:
-    """决策看板：首页按运营生命周期组织入口。"""
+DECISION_DASHBOARD_STAGES = (
+    {
+        "number": "①",
+        "title": "🔬 研发期",
+        "desc": "用户需求洞察与市场验证",
+        "goal": "在版本开发阶段，明确目标用户画像、核心卖点和竞品差异化定位。",
+        "output": "用户需求洞察报告、竞品市场分析、初步版本定位文档。",
+        "next_hint": "↓ 需求明确后，进入测试期进行版本质量验证",
+        "actions": [
+            ("进入用户洞察 → 访谈助手、问卷工坊", "通过玩家访谈和问卷调研，获取一手用户需求。", "insight", "📋 访谈助手", ""),
+            ("进入竞品分析 → 竞品雷达", "分析竞品最新动态，识别市场机会和差异化空间。", "work", "", "📡 竞品雷达"),
+        ],
+    },
+    {
+        "number": "②",
+        "title": "🧪 测试期",
+        "desc": "版本质量评估与反馈清洗",
+        "goal": "在测试阶段快速识别体验问题、负面反馈集中点和版本质量风险。",
+        "output": "玩家反馈清洗报告、优先级问题清单、版本质量调整建议。",
+        "next_hint": "↓ 版本稳定后，进入上线前制定宣发策略和活动方案",
+        "actions": [("进入反馈清洗 → 反馈清洗工作台", "清洗玩家测试反馈，判断问题类型、情绪强度和处理优先级。", "insight", "🧹 反馈清洗", "")],
+    },
+    {
+        "number": "③",
+        "title": "🚀 上线前",
+        "desc": "卖点提炼、宣发策略与活动方案制定",
+        "goal": "在上线前完成版本卖点包装、宣发节奏规划和活动承接方案设计。",
+        "output": "版本分析报告、宣发决策建议、活动策划方案。",
+        "next_hint": "↓ 版本上线后，持续监控版本表现和竞品动态",
+        "actions": [
+            ("进入版本分析 → 版本分析", "拆解版本公告，提炼卖点、传播风险和上线节奏。", "work", "", "🔍 版本分析"),
+            ("进入活动策划 → 活动工坊", "围绕版本目标生成活动主题、用户路径、奖励梯度和复盘指标。", "activity", "", ""),
+        ],
+    },
+    {
+        "number": "④",
+        "title": "📈 上线后",
+        "desc": "版本表现监控与竞品动态追踪",
+        "goal": "在版本上线后持续监控玩家反馈、传播表现和竞品动作，及时调整运营策略。",
+        "output": "竞品对比报告、上线反馈清洗结果、风险预警与行动建议。",
+        "next_hint": "↓ 进入长线运营，基于数据持续优化迭代",
+        "actions": [
+            ("进入竞品雷达 → 竞品对比", "将自家版本与竞品公告对比，判断外部竞争风险。", "work", "", "📡 竞品雷达"),
+            ("进入反馈清洗 → 玩家反馈整理", "整理上线后的玩家反馈，识别高频问题和情绪风险。", "insight", "🧹 反馈清洗", ""),
+        ],
+    },
+    {
+        "number": "⑤",
+        "title": "🔄 长线运营",
+        "desc": "持续优化迭代与活动运营",
+        "goal": "基于长期反馈和阶段复盘，持续优化活动节奏、用户关系和版本迭代方向。",
+        "output": "长线活动方案、用户洞察追问提纲、下一轮运营优化建议。",
+        "next_hint": "",
+        "actions": [
+            ("进入活动策划 → 长线活动方案", "生成可持续复用的活动方案和阶段复盘指标。", "activity", "", ""),
+            ("进入用户洞察 → 持续调研", "通过访谈和问卷持续追踪玩家需求变化。", "insight", "📋 访谈助手", ""),
+        ],
+    },
+)
+
+
+def render_decision_dashboard_header() -> None:
+    """展示运营路线图顶部区域。"""
     st.markdown(
         """
         <div class="decision-hero">
@@ -2075,69 +2176,9 @@ def render_decision_dashboard() -> None:
     )
     render_data_source_config()
 
-    active_stage = st.session_state.get("active_roadmap_stage", None)
-    stages = [
-        {
-            "number": "①",
-            "title": "🔬 研发期",
-            "desc": "用户需求洞察与市场验证",
-            "goal": "在版本开发阶段，明确目标用户画像、核心卖点和竞品差异化定位。",
-            "output": "用户需求洞察报告、竞品市场分析、初步版本定位文档。",
-            "next_hint": "↓ 需求明确后，进入测试期进行版本质量验证",
-            "actions": [
-                ("进入用户洞察 → 访谈助手、问卷工坊", "通过玩家访谈和问卷调研，获取一手用户需求。", "insight", "📋 访谈助手", ""),
-                ("进入竞品分析 → 竞品雷达", "分析竞品最新动态，识别市场机会和差异化空间。", "work", "", "📡 竞品雷达"),
-            ],
-        },
-        {
-            "number": "②",
-            "title": "🧪 测试期",
-            "desc": "版本质量评估与反馈清洗",
-            "goal": "在测试阶段快速识别体验问题、负面反馈集中点和版本质量风险。",
-            "output": "玩家反馈清洗报告、优先级问题清单、版本质量调整建议。",
-            "next_hint": "↓ 版本稳定后，进入上线前制定宣发策略和活动方案",
-            "actions": [
-                ("进入反馈清洗 → 反馈清洗工作台", "清洗玩家测试反馈，判断问题类型、情绪强度和处理优先级。", "insight", "🧹 反馈清洗", ""),
-            ],
-        },
-        {
-            "number": "③",
-            "title": "🚀 上线前",
-            "desc": "卖点提炼、宣发策略与活动方案制定",
-            "goal": "在上线前完成版本卖点包装、宣发节奏规划和活动承接方案设计。",
-            "output": "版本分析报告、宣发决策建议、活动策划方案。",
-            "next_hint": "↓ 版本上线后，持续监控版本表现和竞品动态",
-            "actions": [
-                ("进入版本分析 → 版本分析", "拆解版本公告，提炼卖点、传播风险和上线节奏。", "work", "", "🔍 版本分析"),
-                ("进入活动策划 → 活动工坊", "围绕版本目标生成活动主题、用户路径、奖励梯度和复盘指标。", "activity", "", ""),
-            ],
-        },
-        {
-            "number": "④",
-            "title": "📈 上线后",
-            "desc": "版本表现监控与竞品动态追踪",
-            "goal": "在版本上线后持续监控玩家反馈、传播表现和竞品动作，及时调整运营策略。",
-            "output": "竞品对比报告、上线反馈清洗结果、风险预警与行动建议。",
-            "next_hint": "↓ 进入长线运营，基于数据持续优化迭代",
-            "actions": [
-                ("进入竞品雷达 → 竞品对比", "将自家版本与竞品公告对比，判断外部竞争风险。", "work", "", "📡 竞品雷达"),
-                ("进入反馈清洗 → 玩家反馈整理", "整理上线后的玩家反馈，识别高频问题和情绪风险。", "insight", "🧹 反馈清洗", ""),
-            ],
-        },
-        {
-            "number": "⑤",
-            "title": "🔄 长线运营",
-            "desc": "持续优化迭代与活动运营",
-            "goal": "基于长期反馈和阶段复盘，持续优化活动节奏、用户关系和版本迭代方向。",
-            "output": "长线活动方案、用户洞察追问提纲、下一轮运营优化建议。",
-            "next_hint": "",
-            "actions": [
-                ("进入活动策划 → 长线活动方案", "生成可持续复用的活动方案和阶段复盘指标。", "activity", "", ""),
-                ("进入用户洞察 → 持续调研", "通过访谈和问卷持续追踪玩家需求变化。", "insight", "📋 访谈助手", ""),
-            ],
-        },
-    ]
 
+def build_roadmap_chain(stages: tuple[dict, ...], active_stage: int | None) -> str:
+    """生成流程总览条 HTML。"""
     chain_parts = []
     for index, stage in enumerate(stages):
         dot_class = "roadmap-dot roadmap-dot-active" if active_stage == index else "roadmap-dot"
@@ -2145,64 +2186,100 @@ def render_decision_dashboard() -> None:
         if index < len(stages) - 1:
             line_class = "roadmap-line roadmap-line-active" if active_stage is not None and index < active_stage else "roadmap-line"
             chain_parts.append(f'<div class="{line_class}"></div>')
+    return "".join(chain_parts)
+
+
+def render_roadmap_overview(stages: tuple[dict, ...], active_stage: int | None) -> None:
+    """展示流程总览条。"""
     overview_hint = "点击下方卡片开始" if active_stage is None else f"当前展开：{stages[active_stage]['title']}"
     st.markdown(
         f"""
         <div class="roadmap-overview">
-            <div class="roadmap-chain">{''.join(chain_parts)}</div>
+            <div class="roadmap-chain">{build_roadmap_chain(stages, active_stage)}</div>
             <div class="roadmap-hint">{overview_hint}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+
+def render_roadmap_stage_card(stage: dict, stage_index: int, is_active: bool) -> None:
+    """展示单个阶段卡片。"""
+    card_class = "roadmap-card roadmap-card-active" if is_active else "roadmap-card"
+    display_title = f'{stage["title"]}——{stage["desc"]}' if is_active else stage["title"]
+    st.markdown(
+        f"""
+        <div class="{card_class}">
+            <div class="roadmap-number">{stage["number"]}</div>
+            <div>
+                <div class="roadmap-title">{display_title}</div>
+                <div class="roadmap-desc">{stage["desc"]}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    expand_label = "收起该阶段工作台" if is_active else "展开该阶段工作台"
+    if st.button(expand_label, use_container_width=True, key=f"roadmap_expand_{stage_index}"):
+        st.session_state.active_roadmap_stage = None if is_active else stage_index
+        st.rerun()
+
+
+def render_roadmap_stage_info(stage: dict) -> None:
+    """展示展开阶段的目标与产出。"""
+    st.markdown(
+        f"""
+        <div class="roadmap-info-title">运营目标</div>
+        <div class="roadmap-info-text">{stage["goal"]}</div>
+        <div class="roadmap-info-title">关键产出</div>
+        <div class="roadmap-info-text">{stage["output"]}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_roadmap_actions(stage: dict, stage_index: int) -> None:
+    """展示展开阶段的功能入口。"""
+    st.markdown('<div class="roadmap-action-title">功能入口</div>', unsafe_allow_html=True)
+    for action_index, (label, description, main_mode, insight_tab, version_tab) in enumerate(stage["actions"]):
+        if st.button(label, use_container_width=True, key=f"dashboard_{stage_index}_{action_index}"):
+            switch_to_workspace(main_mode, insight_tab=insight_tab, version_tab=version_tab)
+        st.markdown(f'<div class="roadmap-action-desc">{description}</div>', unsafe_allow_html=True)
+
+
+def render_active_roadmap_stage(stage: dict, stage_index: int, active_stage: int | None) -> None:
+    """展示展开阶段工作台。"""
+    left_col, right_col = st.columns([1.05, 0.95], gap="large")
+    with left_col:
+        render_roadmap_stage_info(stage)
+    with right_col:
+        render_roadmap_actions(stage, stage_index)
+    if stage["next_hint"] and active_stage != stage_index + 1:
+        st.markdown(f'<div class="roadmap-next-hint">{stage["next_hint"]}</div>', unsafe_allow_html=True)
+
+
+def render_roadmap_connector() -> None:
+    """展示阶段之间的流程连接器。"""
+    st.markdown(
+        '<div class="roadmap-connector"><div class="roadmap-connector-inner"><span class="roadmap-arrow">↓</span></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_decision_dashboard() -> None:
+    """决策看板：首页按运营生命周期组织入口。"""
+    stages = DECISION_DASHBOARD_STAGES
+    active_stage = st.session_state.get("active_roadmap_stage", None)
+    render_decision_dashboard_header()
+    render_roadmap_overview(stages, active_stage)
     for stage_index, stage in enumerate(stages):
         is_active = active_stage == stage_index
-        card_class = "roadmap-card roadmap-card-active" if is_active else "roadmap-card"
-        display_title = f'{stage["title"]}——{stage["desc"]}' if is_active else stage["title"]
-        st.markdown(
-            f"""
-            <div class="{card_class}">
-                <div class="roadmap-number">{stage["number"]}</div>
-                <div>
-                    <div class="roadmap-title">{display_title}</div>
-                    <div class="roadmap-desc">{stage["desc"]}</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        expand_label = "收起该阶段工作台" if is_active else "展开该阶段工作台"
-        if st.button(expand_label, use_container_width=True, key=f"roadmap_expand_{stage_index}"):
-            st.session_state.active_roadmap_stage = None if is_active else stage_index
-            st.rerun()
-
+        render_roadmap_stage_card(stage, stage_index, is_active)
         if is_active:
-            left_col, right_col = st.columns([1.05, 0.95], gap="large")
-            with left_col:
-                st.markdown(
-                    f"""
-                    <div class="roadmap-info-title">运营目标</div>
-                    <div class="roadmap-info-text">{stage["goal"]}</div>
-                    <div class="roadmap-info-title">关键产出</div>
-                    <div class="roadmap-info-text">{stage["output"]}</div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            with right_col:
-                st.markdown('<div class="roadmap-action-title">功能入口</div>', unsafe_allow_html=True)
-                for action_index, (label, description, main_mode, insight_tab, version_tab) in enumerate(stage["actions"]):
-                    if st.button(label, use_container_width=True, key=f"dashboard_{stage_index}_{action_index}"):
-                        switch_to_workspace(main_mode, insight_tab=insight_tab, version_tab=version_tab)
-                    st.markdown(f'<div class="roadmap-action-desc">{description}</div>', unsafe_allow_html=True)
-            if stage["next_hint"] and active_stage != stage_index + 1:
-                st.markdown(f'<div class="roadmap-next-hint">{stage["next_hint"]}</div>', unsafe_allow_html=True)
+            render_active_roadmap_stage(stage, stage_index, active_stage)
 
         if stage_index < len(stages) - 1:
-            st.markdown(
-                '<div class="roadmap-connector"><div class="roadmap-connector-inner"><span class="roadmap-arrow">↓</span></div></div>',
-                unsafe_allow_html=True,
-            )
+            render_roadmap_connector()
     st.caption("所有Agent分析结果均基于AI推理与用户输入生成，建议在关键决策前进行交叉验证。")
 
 
@@ -2302,7 +2379,7 @@ def run_insight_generation(
                 error=str(exc),
                 intent=intent_label,
             )
-            st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
+            st.warning(get_user_friendly_generation_error(str(exc)))
             return
 
     source_type = infer_analysis_source_type(result_key)
@@ -2533,8 +2610,114 @@ def render_feedback_clean_charts(report_text: str) -> None:
         st.caption("基于AI分析结果估算，仅供参考")
 
 
-def render_user_insight() -> None:
-    """用户洞察模式：访谈助手、问卷工坊、反馈清洗三个子功能。"""
+INTERVIEW_FALLBACK_PROMPT = "你是一名游戏用户研究访谈助手。请基于访谈目标输出可直接执行的访谈提纲，必须包含：访谈开场白、5-8个核心问题及追问策略、访谈对象筛选建议、结束语和致谢模板。模块之间用分隔线分开，语言自然、具体、可执行。"
+SURVEY_FALLBACK_PROMPT = "你是一名游戏用户研究问卷设计助手。请基于调研目标和目标用户描述输出结构化问卷，必须包含：问卷标题和简介、10-15道混合题型题目、每题测量目的、题型分布说明、投放建议。模块之间用分隔线分开。"
+FEEDBACK_CLEAN_FALLBACK_PROMPT = "你是一名游戏玩家反馈清洗助手。请基于玩家反馈输出：自动分类表、每条反馈情感极性、去重合并后的同类反馈组、优先级TOP N清单、每个高优问题的处理建议和回复话术模板。结果用表格和文字混合展示，模块之间用分隔线分开。"
+
+
+def set_pending_value(key: str, value: str) -> None:
+    """将预设内容暂存到 session_state，下一次渲染前再写入输入框。"""
+    st.session_state[key] = value
+    st.rerun()
+
+
+def render_interview_helper_tab() -> None:
+    """用户洞察子功能：访谈助手。"""
+    st.markdown('<div class="section-title">访谈目标</div>', unsafe_allow_html=True)
+    render_prompt_feature_guide(
+        "这个模块已内置用户研究 Prompt，可尝试把目标写得更具体",
+        ["五层用户画像", "追问预案", "对象筛选", "观察记录表"],
+        "建议写清楚：想研究什么问题、是哪类玩家、处于哪个版本阶段。这样我会输出更像真实访谈执行工具的提纲。",
+    )
+    col_a, col_b, col_c = st.columns(3)
+    if col_a.button("填入退坑访谈示例", use_container_width=True):
+        set_pending_value("pending_interview_goal", "了解近30天流失玩家的退坑原因，重点关注版本节奏、养成压力、剧情吸引力和竞品分流。希望筛选死忠用户、回流失败用户、竞品死忠和社区重度用户分别访谈。")
+    if col_b.button("填入剧情满意度示例", use_container_width=True):
+        set_pending_value("pending_interview_goal", "了解新版本主线剧情满意度，重点观察剧情党、轻度玩家、云玩家和社区讨论用户对角色塑造、节奏、演出和争议点的真实感受。")
+    if col_c.button("填入付费压力示例", use_container_width=True):
+        set_pending_value("pending_interview_goal", "了解中小额付费玩家对新卡池和礼包设计的压力感，重点追问付费动机、放弃付费节点、可接受福利和继续留存条件。")
+    apply_pending_text_value("interview_goal", "pending_interview_goal", "insight_to_interview")
+    interview_goal = st.text_area(
+        "输入你想通过访谈了解的问题",
+        placeholder="例如：了解玩家退坑原因；新版本剧情满意度；核心玩家对抽卡压力的真实感受。",
+        height=150,
+        key="interview_goal",
+    )
+    if st.button("生成访谈提纲", type="primary", use_container_width=True):
+        run_insight_generation("interview_result", "tasks/interview", INTERVIEW_FALLBACK_PROMPT, interview_goal, "请先输入访谈目标。", "insight:interview")
+    render_insight_result("interview_result", "以下为访谈助手生成的访谈提纲。")
+
+
+def apply_pending_text_value(target_key: str, pending_key: str, reference_key: str = "") -> None:
+    """在对应输入框渲染前应用预设或联动内容。"""
+    pending_value = st.session_state.pop(pending_key, "")
+    reference_value = st.session_state.pop(reference_key, "") if reference_key else ""
+    next_value = pending_value or reference_value
+    if next_value:
+        st.session_state[target_key] = next_value
+
+
+def render_survey_workshop_tab() -> None:
+    """用户洞察子功能：问卷工坊。"""
+    st.markdown('<div class="section-title">调研目标与目标用户</div>', unsafe_allow_html=True)
+    render_prompt_feature_guide(
+        "这个模块会为您生成精心设计的量化研究问卷",
+        ["投放版+分析师版", "反向计分", "信效度检验", "预测试方案", "无效样本剔除"],
+        "建议写清楚：调研目标、目标玩家、要验证的假设。这样我会把质控题、预测试表和量化分析框架一起生成。",
+    )
+    col_a, col_b, col_c = st.columns(3)
+    if col_a.button("填入满意度问卷示例", use_container_width=True):
+        set_pending_value("pending_survey_goal", "调研4.2版本主线剧情满意度。目标用户：已完成主线剧情的中重度玩家。希望验证剧情评价、角色喜爱度、继续游玩意愿和付费意愿之间的关系。")
+    if col_b.button("填入回流问卷示例", use_container_width=True):
+        set_pending_value("pending_survey_goal", "调研回流玩家对版本回归活动的体验。目标用户：近90天未登录、本版本回归且完成至少3天任务的玩家。重点验证奖励吸引力、任务压力、回流留存意愿。")
+    if col_c.button("填入活动问卷示例", use_container_width=True):
+        set_pending_value("pending_survey_goal", "调研限时活动参与体验。目标用户：参与活动但完成进度不同的玩家。希望判断活动入口、任务链、奖励梯度、社交分享意愿和疲劳感。")
+    apply_pending_text_value("survey_goal", "pending_survey_goal", "feedback_to_survey_reference")
+    survey_goal = st.text_area(
+        "输入调研目标 + 目标用户描述",
+        placeholder="例如：调研新版本剧情满意度；目标用户为完成主线剧情的中重度玩家。",
+        height=170,
+        key="survey_goal",
+    )
+    if st.button("生成问卷", type="primary", use_container_width=True):
+        run_insight_generation("survey_result", "tasks/survey", SURVEY_FALLBACK_PROMPT, survey_goal, "请先输入调研目标和目标用户描述。", "insight:survey")
+    survey_result = render_insight_result("survey_result", "以下为问卷工坊生成的调研问卷。")
+    if survey_result and st.button("将问卷结论发送到反馈清洗作为分析参考", use_container_width=True):
+        st.session_state.survey_to_clean_reference = survey_result
+        st.success("已发送到反馈清洗，可切换到反馈清洗 Tab 查看。")
+
+
+def render_feedback_clean_tab() -> None:
+    """用户洞察子功能：反馈清洗。"""
+    st.markdown('<div class="section-title">玩家反馈文本</div>', unsafe_allow_html=True)
+    render_prompt_feature_guide(
+        "这个模块会把玩家反馈拆成可行动的问题清单",
+        ["8类基础情绪", "1-5分情绪强度", "发言动机标签", "优先级TOP问题", "情绪图表"],
+        "建议一条反馈一行，并尽量保留原话。混入调侃、竞品拉踩、建设性建议也没关系，我会分开标注。",
+    )
+    uploaded_file = st.file_uploader("上传 txt 文件作为输入源", type=["txt"])
+    uploaded_text = uploaded_file.read().decode("utf-8", errors="replace") if uploaded_file is not None else ""
+    reference = st.session_state.get("survey_to_clean_reference", "")
+    feedback_text = st.text_area(
+        "粘贴大量玩家反馈（一条一行，或自由文本）",
+        value=uploaded_text,
+        placeholder="例如：活动太肝了；礼包价格不合理；新角色强度太高；服务器卡顿影响体验。",
+        height=260,
+        key="clean_feedback_text",
+    )
+    if reference:
+        st.info("已收到问卷工坊发送来的参考内容，本次清洗会一并参考。")
+    if st.button("开始清洗", type="primary", use_container_width=True):
+        combined_feedback = f"分析参考：\n{reference}\n\n玩家反馈：\n{feedback_text}".strip()
+        run_insight_generation("clean_result", "tasks/feedback_clean", FEEDBACK_CLEAN_FALLBACK_PROMPT, combined_feedback, "请先粘贴玩家反馈，或上传 txt 文件。", "insight:clean")
+    clean_result = render_insight_result("clean_result", "以下为反馈清洗生成的玩家反馈整理结果。")
+    if clean_result and st.button("将反馈洞察发送到访谈助手生成追问提纲", use_container_width=True):
+        st.session_state.insight_to_interview = f"基于以下反馈洞察，生成后续玩家访谈追问提纲：\n\n{clean_result}"
+        st.success("已发送到访谈助手，可切换到访谈助手 Tab 查看。")
+
+
+def render_user_insight_header() -> None:
+    """展示用户洞察模式顶部说明。"""
     st.markdown(
         """
         <div class="task-panel">
@@ -2546,135 +2729,38 @@ def render_user_insight() -> None:
         unsafe_allow_html=True,
     )
 
-    # 改动位置：用可预设的横向选择控件替代原生 Tab，支持决策看板按钮直接跳转。
+
+def select_user_insight_tab() -> str:
+    """选择用户洞察子工具，支持看板跳转到指定 Tab。"""
     insight_options = ["📋 访谈助手", "📋 问卷工坊", "🧹 反馈清洗"]
     target_insight_tab = st.session_state.pop("target_insight_tab", "")
+    selected_insight_index = 0
     if target_insight_tab in insight_options:
-        st.session_state.insight_workspace_tab = target_insight_tab
+        selected_insight_index = insight_options.index(target_insight_tab)
+        st.session_state.pop("insight_workspace_tab", None)
+    elif st.session_state.get("insight_workspace_tab") in insight_options:
+        selected_insight_index = insight_options.index(st.session_state["insight_workspace_tab"])
     selected_insight_tab = st.radio(
         "选择用户洞察工具",
         insight_options,
+        index=selected_insight_index,
         horizontal=True,
         key="insight_workspace_tab",
         label_visibility="collapsed",
     )
+    return selected_insight_tab
 
+
+def render_user_insight() -> None:
+    """用户洞察模式：访谈助手、问卷工坊、反馈清洗三个子功能。"""
+    render_user_insight_header()
+    selected_insight_tab = select_user_insight_tab()
     if selected_insight_tab == "📋 访谈助手":
-        st.markdown('<div class="section-title">访谈目标</div>', unsafe_allow_html=True)
-        render_prompt_feature_guide(
-            "这个模块已内置用户研究 Prompt，可尝试把目标写得更具体",
-            ["五层用户画像", "追问预案", "对象筛选", "观察记录表"],
-            "建议写清楚：想研究什么问题、是哪类玩家、处于哪个版本阶段。这样我会输出更像真实访谈执行工具的提纲。",
-        )
-        col_a, col_b, col_c = st.columns(3)
-        if col_a.button("填入退坑访谈示例", use_container_width=True):
-            st.session_state.interview_goal = "了解近30天流失玩家的退坑原因，重点关注版本节奏、养成压力、剧情吸引力和竞品分流。希望筛选死忠用户、回流失败用户、竞品死忠和社区重度用户分别访谈。"
-        if col_b.button("填入剧情满意度示例", use_container_width=True):
-            st.session_state.interview_goal = "了解新版本主线剧情满意度，重点观察剧情党、轻度玩家、云玩家和社区讨论用户对角色塑造、节奏、演出和争议点的真实感受。"
-        if col_c.button("填入付费压力示例", use_container_width=True):
-            st.session_state.interview_goal = "了解中小额付费玩家对新卡池和礼包设计的压力感，重点追问付费动机、放弃付费节点、可接受福利和继续留存条件。"
-        default_goal = st.session_state.pop("insight_to_interview", "")
-        interview_goal = st.text_area(
-            "输入你想通过访谈了解的问题",
-            value=default_goal,
-            placeholder="例如：了解玩家退坑原因；新版本剧情满意度；核心玩家对抽卡压力的真实感受。",
-            height=150,
-            key="interview_goal",
-        )
-        if st.button("生成访谈提纲", type="primary", use_container_width=True):
-            fallback_prompt = """
-你是一名游戏用户研究访谈助手。请基于访谈目标输出可直接执行的访谈提纲，必须包含：访谈开场白、5-8个核心问题及追问策略、访谈对象筛选建议、结束语和致谢模板。模块之间用分隔线分开，语言自然、具体、可执行。
-"""
-            run_insight_generation(
-                "interview_result",
-                "tasks/interview",
-                fallback_prompt,
-                interview_goal,
-                "请先输入访谈目标。",
-                "insight:interview",
-            )
-        render_insight_result("interview_result", "以下为访谈助手生成的访谈提纲。")
-
-    if selected_insight_tab == "📋 问卷工坊":
-        st.markdown('<div class="section-title">调研目标与目标用户</div>', unsafe_allow_html=True)
-        render_prompt_feature_guide(
-            "这个模块已升级为量化研究问卷，不只是生成题目",
-            ["投放版+分析师版", "反向计分", "信效度检验", "预测试方案", "无效样本剔除"],
-            "建议写清楚：调研目标、目标玩家、要验证的假设。这样我会把质控题、预测试表和量化分析框架一起生成。",
-        )
-        col_a, col_b, col_c = st.columns(3)
-        if col_a.button("填入满意度问卷示例", use_container_width=True):
-            st.session_state.survey_goal = "调研4.2版本主线剧情满意度。目标用户：已完成主线剧情的中重度玩家。希望验证剧情评价、角色喜爱度、继续游玩意愿和付费意愿之间的关系。"
-        if col_b.button("填入回流问卷示例", use_container_width=True):
-            st.session_state.survey_goal = "调研回流玩家对版本回归活动的体验。目标用户：近90天未登录、本版本回归且完成至少3天任务的玩家。重点验证奖励吸引力、任务压力、回流留存意愿。"
-        if col_c.button("填入活动问卷示例", use_container_width=True):
-            st.session_state.survey_goal = "调研限时活动参与体验。目标用户：参与活动但完成进度不同的玩家。希望判断活动入口、任务链、奖励梯度、社交分享意愿和疲劳感。"
-        survey_reference = st.session_state.get("feedback_to_survey_reference", "")
-        survey_goal = st.text_area(
-            "输入调研目标 + 目标用户描述",
-            value=survey_reference,
-            placeholder="例如：调研新版本剧情满意度；目标用户为完成主线剧情的中重度玩家。",
-            height=170,
-            key="survey_goal",
-        )
-        if st.button("生成问卷", type="primary", use_container_width=True):
-            fallback_prompt = """
-你是一名游戏用户研究问卷设计助手。请基于调研目标和目标用户描述输出结构化问卷，必须包含：问卷标题和简介、10-15道混合题型题目、每题测量目的、题型分布说明、投放建议。模块之间用分隔线分开。
-"""
-            run_insight_generation(
-                "survey_result",
-                "tasks/survey",
-                fallback_prompt,
-                survey_goal,
-                "请先输入调研目标和目标用户描述。",
-                "insight:survey",
-            )
-        survey_result = render_insight_result("survey_result", "以下为问卷工坊生成的调研问卷。")
-        if survey_result and st.button("将问卷结论发送到反馈清洗作为分析参考", use_container_width=True):
-            st.session_state.survey_to_clean_reference = survey_result
-            st.success("已发送到反馈清洗，可切换到反馈清洗 Tab 查看。")
-
-    if selected_insight_tab == "🧹 反馈清洗":
-        st.markdown('<div class="section-title">玩家反馈文本</div>', unsafe_allow_html=True)
-        render_prompt_feature_guide(
-            "这个模块会把玩家反馈拆成可行动的问题清单",
-            ["8类基础情绪", "1-5分情绪强度", "发言动机标签", "优先级TOP问题", "情绪图表"],
-            "建议一条反馈一行，并尽量保留原话。混入调侃、竞品拉踩、建设性建议也没关系，我会分开标注。",
-        )
-        uploaded_file = st.file_uploader("上传 txt 文件作为输入源", type=["txt"])
-        uploaded_text = ""
-        if uploaded_file is not None:
-            uploaded_text = uploaded_file.read().decode("utf-8", errors="replace")
-
-        reference = st.session_state.get("survey_to_clean_reference", "")
-        default_feedback = uploaded_text or ""
-        feedback_text = st.text_area(
-            "粘贴大量玩家反馈（一条一行，或自由文本）",
-            value=default_feedback,
-            placeholder="例如：活动太肝了；礼包价格不合理；新角色强度太高；服务器卡顿影响体验。",
-            height=260,
-            key="clean_feedback_text",
-        )
-        if reference:
-            st.info("已收到问卷工坊发送来的参考内容，本次清洗会一并参考。")
-
-        if st.button("开始清洗", type="primary", use_container_width=True):
-            fallback_prompt = """
-你是一名游戏玩家反馈清洗助手。请基于玩家反馈输出：自动分类表、每条反馈情感极性、去重合并后的同类反馈组、优先级TOP N清单、每个高优问题的处理建议和回复话术模板。结果用表格和文字混合展示，模块之间用分隔线分开。
-"""
-            combined_feedback = f"分析参考：\n{reference}\n\n玩家反馈：\n{feedback_text}".strip()
-            run_insight_generation(
-                "clean_result",
-                "tasks/feedback_clean",
-                fallback_prompt,
-                combined_feedback,
-                "请先粘贴玩家反馈，或上传 txt 文件。",
-                "insight:clean",
-            )
-        clean_result = render_insight_result("clean_result", "以下为反馈清洗生成的玩家反馈整理结果。")
-        if clean_result and st.button("将反馈洞察发送到访谈助手生成追问提纲", use_container_width=True):
-            st.session_state.insight_to_interview = f"基于以下反馈洞察，生成后续玩家访谈追问提纲：\n\n{clean_result}"
-            st.success("已发送到访谈助手，可切换到访谈助手 Tab 查看。")
+        render_interview_helper_tab()
+    elif selected_insight_tab == "📋 问卷工坊":
+        render_survey_workshop_tab()
+    else:
+        render_feedback_clean_tab()
 
 
 def list_competitor_files() -> list[Path]:
@@ -2853,8 +2939,159 @@ def render_collaboration_discussion() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_version_analysis_tab() -> None:
+    """版本决策子功能：生成自家版本分析报告。"""
+    st.markdown('<div class="section-title">请粘贴游戏版本公告，我将为你生成宣发决策报告</div>', unsafe_allow_html=True)
+    render_prompt_feature_guide(
+        "这个模块已强化数据敏感度，适合测试运营判断能力",
+        ["玩家分层卖点", "爆点推理逻辑", "风险类比依据", "平台传播钩子", "后续追踪指标"],
+        "建议粘贴完整公告，尤其保留角色、活动、福利、商业化、PV/音乐等信息。我会把判断写成“依据→结论→行动建议”。",
+    )
+    announcement = st.text_area(
+        "版本公告",
+        placeholder='示例：新版本「XXX」上线，新增角色「XXX」...',
+        height=280,
+        label_visibility="collapsed",
+        key="version_decision_announcement",
+    )
+    if st.button("生成分析报告", type="primary", use_container_width=True, key="version_decision_submit"):
+        run_version_analysis_generation(announcement)
+
+    version_result = render_insight_result("version_analysis_result", "以下为 AI 生成的版本分析报告，仅供参考。")
+    if version_result and st.button("将此版本分析结果发送到竞品雷达作为对比基准", use_container_width=True):
+        st.session_state.version_to_competitor_baseline = version_result
+        st.session_state.target_version_tab = "📡 竞品雷达"
+        st.session_state.version_baseline_notice = True
+        st.rerun()
+
+
+def run_version_analysis_generation(announcement: str) -> None:
+    """执行版本分析生成流程。"""
+    if not announcement.strip():
+        st.warning("请先粘贴版本公告。")
+        return
+    start_time = time.perf_counter()
+    with st.spinner("请您稍等片刻，报告马上就到🚅"):
+        try:
+            result = run_agent_task("version:analysis", announcement, get_version_analysis_prompt())
+        except Exception as exc:
+            update_runtime_status(False, time.perf_counter() - start_time, str(exc), "version:analysis")
+            st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
+            return
+
+    st.session_state.version_analysis_result = append_ai_knowledge_notice(result)
+    st.session_state.version_analysis_result_warning_enabled = is_data_source_warning_enabled()
+    st.session_state.version_analysis_path = ""
+    update_runtime_status(True, time.perf_counter() - start_time, "", "version:analysis")
+    mark_result_ready()
+    st.rerun()
+
+
+def render_competitor_radar_tab() -> None:
+    """版本决策子功能：竞品雷达。"""
+    st.markdown('<div class="section-title">竞品版本公告</div>', unsafe_allow_html=True)
+    render_prompt_feature_guide(
+        "这个模块会先判断竞品类型，再把竞品动作转成策略选项",
+        ["竞品分类", "拆解-模仿-超越", "2x2优先级矩阵", "高风险陷阱", "借鉴风险自查"],
+        "建议先选择竞品分类；如果你有竞品连续两个版本公告，可以一起粘贴，我会额外分析活动力度、付费节奏和宣发方向的变化。",
+    )
+    selected_text = render_competitor_file_selector()
+    competitor_category = render_competitor_category_selector()
+    competitor_text = st.text_area(
+        "手动粘贴竞品版本公告",
+        value=selected_text,
+        placeholder="粘贴竞品版本公告、活动说明、更新日志或社区公告。",
+        height=260,
+        key="competitor_announcement",
+    )
+    baseline = st.session_state.get("version_to_competitor_baseline", "")
+    render_competitor_baseline_notice(baseline)
+    if st.button("开始竞品分析", type="primary", use_container_width=True, key="competitor_submit"):
+        run_competitor_analysis_generation(competitor_text, competitor_category, baseline)
+
+    render_insight_result("competitor_result", "以下为竞品雷达生成的对比分析报告。")
+
+
+def render_competitor_file_selector() -> str:
+    """渲染竞品文件选择器并返回已选文件内容。"""
+    competitor_files = list_competitor_files()
+    if not competitor_files:
+        st.caption("未发现 works/competitor/ 文件夹或可读取文件，可直接手动粘贴竞品公告。")
+        return ""
+    file_labels = ["手动粘贴"] + [file_path.relative_to(PROJECT_DIR).as_posix() for file_path in competitor_files]
+    selected_label = st.selectbox("选择竞品分析专用文件", file_labels)
+    if selected_label == "手动粘贴":
+        return ""
+    selected_text = read_competitor_file(PROJECT_DIR / selected_label)
+    st.info(f"已加载：{selected_label}")
+    return selected_text
+
+
+def render_competitor_category_selector() -> str:
+    """渲染竞品分类选择器。"""
+    return st.selectbox(
+        "选择竞品分类",
+        [
+            "未分类/通用分析",
+            "同玩法同生态位竞品",
+            "同生态位不同玩法竞品",
+            "同玩法不同生态位竞品",
+        ],
+        help="不同竞品类型会影响分析权重：同玩法同生态位侧重攻防，跨玩法同生态位侧重运营方法论迁移，同玩法不同生态位侧重玩法细节拆解。",
+        key="competitor_category",
+    )
+
+
+def render_competitor_baseline_notice(baseline: str) -> None:
+    """提示竞品雷达已载入自家版本基准。"""
+    if not baseline:
+        return
+    notice_text = "已加载自家版本数据，将作为本次竞品对比基准。"
+    if st.session_state.pop("version_baseline_notice", False):
+        st.success(notice_text)
+    else:
+        st.info(notice_text)
+
+
+def get_competitor_prompt() -> str:
+    """读取竞品雷达提示词，优先使用配置中心内容。"""
+    fallback_prompt = """
+你是一名游戏竞品运营分析助手。请基于竞品版本公告和可选的自家版本分析基准，输出竞品雷达报告。
+必须包含：竞品版本核心更新摘要；与自家版本的对比分析；可借鉴策略点；风险预警；综合策略建议；后续追踪建议。
+模块之间用分隔线分开，结论要清晰、具体、可执行。
+"""
+    return read_prompt_file("tasks/competitor", fallback_prompt)
+
+
+def run_competitor_analysis_generation(competitor_text: str, competitor_category: str, baseline: str) -> None:
+    """执行竞品雷达生成流程。"""
+    if not competitor_text.strip():
+        st.warning("请先选择或粘贴竞品版本公告。")
+        return
+    user_content = (
+        f"竞品分类：\n{competitor_category}\n\n"
+        f"自家版本分析基准：\n{baseline}\n\n"
+        f"竞品版本公告：\n{competitor_text}"
+    ).strip()
+    start_time = time.perf_counter()
+    with st.spinner("请您稍等片刻，竞品雷达正在扫描🚅"):
+        try:
+            result = run_agent_task("version:competitor", user_content, get_competitor_prompt())
+        except Exception as exc:
+            update_runtime_status(False, time.perf_counter() - start_time, str(exc), "version:competitor")
+            st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
+            return
+
+    st.session_state.competitor_result = append_ai_knowledge_notice(result)
+    st.session_state.competitor_result_warning_enabled = is_data_source_warning_enabled()
+    st.session_state.competitor_result_path = ""
+    update_runtime_status(True, time.perf_counter() - start_time, "", "version:competitor")
+    mark_result_ready()
+    st.rerun()
+
+
 def render_version_decision() -> None:
-    """版本决策模式：版本分析与竞品雷达。"""
+    """版本决策模式：版本分析、竞品雷达与协作讨论。"""
     st.markdown(
         """
         <div class="task-panel">
@@ -2866,168 +3103,28 @@ def render_version_decision() -> None:
         unsafe_allow_html=True,
     )
 
-    # 改动位置：用可预设的横向选择控件替代原生 Tab，支持决策看板跳转到指定子功能。
     version_options = ["🔍 版本分析", "📡 竞品雷达", "🤝 协作讨论"]
     target_version_tab = st.session_state.pop("target_version_tab", "")
+    selected_version_index = 0
     if target_version_tab in version_options:
-        st.session_state.version_workspace_tab = target_version_tab
+        selected_version_index = version_options.index(target_version_tab)
+        st.session_state.pop("version_workspace_tab", None)
+    elif st.session_state.get("version_workspace_tab") in version_options:
+        selected_version_index = version_options.index(st.session_state["version_workspace_tab"])
     selected_version_tab = st.radio(
         "选择版本决策工具",
         version_options,
+        index=selected_version_index,
         horizontal=True,
         key="version_workspace_tab",
         label_visibility="collapsed",
     )
 
     if selected_version_tab == "🔍 版本分析":
-        st.markdown('<div class="section-title">请粘贴游戏版本公告，我将为你生成宣发决策报告</div>', unsafe_allow_html=True)
-        render_prompt_feature_guide(
-            "这个模块已强化数据敏感度，适合测试运营判断能力",
-            ["玩家分层卖点", "爆点推理逻辑", "风险类比依据", "平台传播钩子", "后续追踪指标"],
-            "建议粘贴完整公告，尤其保留角色、活动、福利、商业化、PV/音乐等信息。我会把判断写成“依据→结论→行动建议”。",
-        )
-        announcement = st.text_area(
-            "版本公告",
-            placeholder='示例：新版本「XXX」上线，新增角色「XXX」...',
-            height=280,
-            label_visibility="collapsed",
-            key="version_decision_announcement",
-        )
-        if st.button("生成分析报告", type="primary", use_container_width=True, key="version_decision_submit"):
-            if not announcement.strip():
-                st.warning("请先粘贴版本公告。")
-            else:
-                start_time = time.perf_counter()
-                with st.spinner("请您稍等片刻，报告马上就到🚅"):
-                    try:
-                        system_prompt = """
-你是一名游戏版本运营决策分析助手。请基于用户粘贴的版本公告，输出六模块分析报告。
-必须包含：
-1. 版本内容拆解：提炼核心更新、活动、角色、系统、福利和商业化信息。
-2. 卖点矩阵：按核心玩家、回流玩家、泛用户、付费玩家拆分传播卖点。
-3. 宣发文案：给出可直接使用的短文案、长文案和社区话题方向。
-4. 内容效果预判：判断可能带来的拉新、回流、付费、讨论热度和争议风险。每个判断都必须附带推理逻辑：
-   - 爆点预测：说明是基于哪类玩家的什么行为规律得出的，禁止使用“可能会火”“大概率受欢迎”等无依据的模糊判断。
-   - 风险预警：说明是基于哪个历史版本的什么数据趋势类比得出的；如果输入中没有历史数据，要明确写“需要补充历史版本数据验证”。
-   - 传播建议：说明是基于哪个平台的什么传播规律选择的钩子类型。
-   正确示例：“根据过往版本，剧情高光角色PV上线后72小时内B站二创投稿量通常增长40%以上，本次PV的2分15秒处角色台词可作为传播钩子，建议优先投放B站。”
-5. 音乐专业分析：如公告涉及音乐、角色PV、版本PV、场景氛围或音频体验，请从音乐与情绪传达角度分析；如果没有明显音乐信息，也要说明可如何补充音乐宣发角度。
-6. 宣发节奏建议：给出预热期、上线期、发酵期、复盘期的行动安排。
-7. 后续追踪建议：作为报告末尾的独立区块，必须紧扣本次版本公告和前文建议，说明方案落地后应该关注哪些指标、在什么时间节点做复盘、用什么信号判断是否需要调整。不要另起新方案，不要脱离本次版本内容泛泛而谈；如果缺少历史基准或投放数据，请明确写出需要补充哪些数据，不要编造具体内部数值。
-模块之间用分隔线分开，结论要具体，不要空泛。
-"""
-                        result = run_agent_task("version:analysis", announcement, system_prompt)
-                    except Exception as exc:
-                        update_runtime_status(False, time.perf_counter() - start_time, str(exc), "version:analysis")
-                        st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
-                    else:
-                        result = append_ai_knowledge_notice(result)
-                        st.session_state.version_analysis_result_warning_enabled = is_data_source_warning_enabled()
-                        report_to_save = prepare_analysis_report_for_save(
-                            result,
-                            "version",
-                            include_warning=is_data_source_warning_enabled(),
-                        )
-                        st.session_state.version_analysis_result = result
-                        st.session_state.version_analysis_path = ""
-                        update_runtime_status(True, time.perf_counter() - start_time, "", "version:analysis")
-                        mark_result_ready()
-                        st.rerun()
-
-        version_result = render_insight_result("version_analysis_result", "以下为 AI 生成的版本分析报告，仅供参考。")
-        if version_result and st.button("将此版本分析结果发送到竞品雷达作为对比基准", use_container_width=True):
-            st.session_state.version_to_competitor_baseline = version_result
-            st.session_state.target_version_tab = "📡 竞品雷达"
-            st.session_state.version_baseline_notice = True
-            st.rerun()
-
-    if selected_version_tab == "📡 竞品雷达":
-        st.markdown('<div class="section-title">竞品版本公告</div>', unsafe_allow_html=True)
-        render_prompt_feature_guide(
-            "这个模块会先判断竞品类型，再把竞品动作转成策略选项",
-            ["竞品分类", "拆解-模仿-超越", "2x2优先级矩阵", "高风险陷阱", "借鉴风险自查"],
-            "建议先选择竞品分类；如果你有竞品连续两个版本公告，可以一起粘贴，我会额外分析活动力度、付费节奏和宣发方向的变化。",
-        )
-        competitor_files = list_competitor_files()
-        selected_text = ""
-        if competitor_files:
-            file_labels = ["手动粘贴"] + [file_path.relative_to(PROJECT_DIR).as_posix() for file_path in competitor_files]
-            selected_label = st.selectbox("选择竞品分析专用文件", file_labels)
-            if selected_label != "手动粘贴":
-                selected_path = PROJECT_DIR / selected_label
-                selected_text = read_competitor_file(selected_path)
-                st.info(f"已加载：{selected_label}")
-        else:
-            st.caption("未发现 works/competitor/ 文件夹或可读取文件，可直接手动粘贴竞品公告。")
-
-        competitor_category = st.selectbox(
-            "选择竞品分类",
-            [
-                "未分类/通用分析",
-                "同玩法同生态位竞品",
-                "同生态位不同玩法竞品",
-                "同玩法不同生态位竞品",
-            ],
-            help="不同竞品类型会影响分析权重：同玩法同生态位侧重攻防，跨玩法同生态位侧重运营方法论迁移，同玩法不同生态位侧重玩法细节拆解。",
-            key="competitor_category",
-        )
-
-        competitor_text = st.text_area(
-            "手动粘贴竞品版本公告",
-            value=selected_text,
-            placeholder="粘贴竞品版本公告、活动说明、更新日志或社区公告。",
-            height=260,
-            key="competitor_announcement",
-        )
-        baseline = st.session_state.get("version_to_competitor_baseline", "")
-        if baseline:
-            notice_text = "已加载自家版本数据，将作为本次竞品对比基准。"
-            if st.session_state.pop("version_baseline_notice", False):
-                st.success(notice_text)
-            else:
-                st.info(notice_text)
-
-        if st.button("开始竞品分析", type="primary", use_container_width=True, key="competitor_submit"):
-            if not competitor_text.strip():
-                st.warning("请先选择或粘贴竞品版本公告。")
-            else:
-                fallback_prompt = """
-你是一名游戏竞品运营分析助手。请基于竞品版本公告和可选的自家版本分析基准，输出竞品雷达报告。
-必须包含：竞品版本核心更新摘要；与自家版本的对比分析，维度包括活动设计、福利投放、商业化节奏、宣发策略；可借鉴策略点2-3条；风险预警；综合策略建议1-2条。
-报告末尾必须增加“后续追踪建议”独立区块，紧扣本次竞品动作和前文策略建议，说明后续应该关注哪些指标、在什么时间节点复盘、用什么信号判断竞品动作是否正在影响自家版本表现。不要另起新方案，不要脱离竞品公告泛泛而谈；如果没有自家版本基准，请只写竞品侧可观察指标和需要补充的自家数据，不要编造自家信息。
-模块之间用分隔线分开，结论要清晰、具体、可执行。
-"""
-                system_prompt = read_prompt_file("tasks/competitor", fallback_prompt)
-                user_content = (
-                    f"竞品分类：\n{competitor_category}\n\n"
-                    f"自家版本分析基准：\n{baseline}\n\n"
-                    f"竞品版本公告：\n{competitor_text}"
-                ).strip()
-                start_time = time.perf_counter()
-                with st.spinner("请您稍等片刻，竞品雷达正在扫描🚅"):
-                    try:
-                        result = run_agent_task("version:competitor", user_content, system_prompt)
-                    except Exception as exc:
-                        update_runtime_status(False, time.perf_counter() - start_time, str(exc), "version:competitor")
-                        st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
-                    else:
-                        result = append_ai_knowledge_notice(result)
-                        competitor_dir = REPORT_DIR / "competitor"
-                        st.session_state.competitor_result_warning_enabled = is_data_source_warning_enabled()
-                        report_to_save = prepare_analysis_report_for_save(
-                            result,
-                            "competitor",
-                            include_warning=is_data_source_warning_enabled(),
-                        )
-                        st.session_state.competitor_result = result
-                        st.session_state.competitor_result_path = ""
-                        update_runtime_status(True, time.perf_counter() - start_time, "", "version:competitor")
-                        mark_result_ready()
-                        st.rerun()
-
-        render_insight_result("competitor_result", "以下为竞品雷达生成的对比分析报告。")
-
-    if selected_version_tab == "🤝 协作讨论":
+        render_version_analysis_tab()
+    elif selected_version_tab == "📡 竞品雷达":
+        render_competitor_radar_tab()
+    else:
         render_collaboration_discussion()
 
 
@@ -3333,6 +3430,10 @@ def render_admin_mode() -> None:
                 st.session_state.admin_unlocked = True
                 st.rerun()
             st.warning("\u5bc6\u7801\u4e0d\u6b63\u786e\uff0c\u8bf7\u91cd\u65b0\u8f93\u5165\u3002")
+        st.caption("演示入口：这是作品集展示中的模拟安全策略，用于让面试官快速查看后台结构；真实部署时应关闭此入口，仅保留密码或企业统一认证。")
+        if st.button("演示模式：直接进入管理后台", use_container_width=True, key="admin_demo_login"):
+            st.session_state.admin_unlocked = True
+            st.rerun()
         return
 
     st.markdown("### 系统概览仪表盘")

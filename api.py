@@ -8,12 +8,15 @@ Authorization: Bearer <token>
 from __future__ import annotations
 
 import json
+import logging
 import os
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import runtime_paths
@@ -21,6 +24,14 @@ import security_utils
 from core import Orchestrator
 from database import AnalysisReport, User, get_db, init_db
 
+
+LOCAL_DEV_AUTH_MODE = "local_dev_no_token"
+TOKEN_AUTH_MODE = "token"
+PERSISTENCE_ENV = "AI_OPS_API_PERSISTENCE"
+PERSISTENCE_ENABLED_VALUE = "1"
+DEFAULT_API_USERNAME = "api_demo_user"
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="AI 运营分身 API",
@@ -52,15 +63,15 @@ def verify_api_auth(authorization: str | None = Header(default=None)) -> dict[st
     """配置 Token 时强制鉴权；未配置时仅作为本机开发模式。"""
     token = security_utils.get_api_token()
     if not token:
-        return {"mode": "local_dev_no_token"}
+        return {"mode": LOCAL_DEV_AUTH_MODE}
     if authorization != f"Bearer {token}":
         raise HTTPException(status_code=401, detail="未授权：请提供有效的 Bearer Token。")
-    return {"mode": "token"}
+    return {"mode": TOKEN_AUTH_MODE}
 
 
 def should_persist(payload: Any) -> bool:
     """只有显式请求且全局开关允许时才写数据库。"""
-    return bool(getattr(payload, "persist", False)) and os.getenv("AI_OPS_API_PERSISTENCE", "0") == "1"
+    return bool(getattr(payload, "persist", False)) and os.getenv(PERSISTENCE_ENV, "0") == PERSISTENCE_ENABLED_VALUE
 
 
 def get_or_create_api_user(db: Session, username: str) -> User:
@@ -90,8 +101,13 @@ def save_analysis_report(db: Session, report_type: str, result: dict[str, Any], 
         db.commit()
         db.refresh(report)
         return report.id
-    except Exception:
+    except (SQLAlchemyError, TypeError, ValueError):
         db.rollback()
+        logger.exception(
+            "API report persistence failed: report_type=%s username=%s",
+            report_type,
+            username,
+        )
         return None
 
 
@@ -105,7 +121,7 @@ def attach_persistence_meta(result: dict[str, Any], report_id: int | None, persi
 
 
 class BasePersistRequest(BaseModel):
-    username: str = Field("api_demo_user", description="调用用户名称")
+    username: str = Field(DEFAULT_API_USERNAME, description="调用用户名称")
     persist: bool = Field(False, description="是否显式保存到 API 数据库")
 
 
@@ -148,7 +164,7 @@ def health() -> dict[str, str]:
         "status": "ok",
         "service": "ai-ops-agent-api",
         "bind_hint": "请默认使用 127.0.0.1，本服务不建议直接公网暴露。",
-        "auth": "token" if security_utils.get_api_token() else "local_dev_no_token",
+        "auth": TOKEN_AUTH_MODE if security_utils.get_api_token() else LOCAL_DEV_AUTH_MODE,
     }
 
 
@@ -159,51 +175,83 @@ def maybe_save(db: Session, report_type: str, result: dict[str, Any], payload: B
     return report_id, report_id is not None
 
 
+def run_endpoint_with_persistence(
+    db: Session,
+    report_type: str,
+    payload: BasePersistRequest,
+    handler: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """统一处理 API 生成、显式保存和返回元信息，避免各端点重复实现。"""
+    result = handler()
+    report_id, persisted = maybe_save(db, report_type, result, payload)
+    return attach_persistence_meta(result, report_id, persisted)
+
+
 @app.post("/chat", dependencies=[Depends(verify_api_auth)])
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    result = orchestrator.run_chat(payload.user_input, session_id=payload.session_id, messages=payload.messages)
-    report_id, persisted = maybe_save(db, "chat", result, payload)
-    return attach_persistence_meta(result, report_id, persisted)
+    return run_endpoint_with_persistence(
+        db,
+        "chat",
+        payload,
+        lambda: orchestrator.run_chat(payload.user_input, session_id=payload.session_id, messages=payload.messages),
+    )
 
 
 @app.post("/version-analysis", dependencies=[Depends(verify_api_auth)])
 def version_analysis(payload: VersionAnalysisRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    result = orchestrator.run_version_analysis(payload.announcement_text, system_prompt=payload.system_prompt)
-    report_id, persisted = maybe_save(db, "version_analysis", result, payload)
-    return attach_persistence_meta(result, report_id, persisted)
+    return run_endpoint_with_persistence(
+        db,
+        "version_analysis",
+        payload,
+        lambda: orchestrator.run_version_analysis(payload.announcement_text, system_prompt=payload.system_prompt),
+    )
 
 
 @app.post("/feedback-clean", dependencies=[Depends(verify_api_auth)])
 def feedback_clean(payload: FeedbackCleanRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    result = orchestrator.run_feedback_clean(payload.feedback_list, system_prompt=payload.system_prompt)
-    report_id, persisted = maybe_save(db, "feedback_clean", result, payload)
-    return attach_persistence_meta(result, report_id, persisted)
+    return run_endpoint_with_persistence(
+        db,
+        "feedback_clean",
+        payload,
+        lambda: orchestrator.run_feedback_clean(payload.feedback_list, system_prompt=payload.system_prompt),
+    )
 
 
 @app.post("/collaboration", dependencies=[Depends(verify_api_auth)])
 def collaboration(payload: CollaborationRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    result = orchestrator.run_collaboration(payload.announcement_text, agents=payload.agents, goal=payload.goal)
-    report_id, persisted = maybe_save(db, "collaboration", result, payload)
-    return attach_persistence_meta(result, report_id, persisted)
+    return run_endpoint_with_persistence(
+        db,
+        "collaboration",
+        payload,
+        lambda: orchestrator.run_collaboration(payload.announcement_text, agents=payload.agents, goal=payload.goal),
+    )
 
 
 @app.post("/competitor-analysis", dependencies=[Depends(verify_api_auth)])
 def competitor_analysis(payload: TaskRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    result = orchestrator.run_competitor_analysis(payload.user_content, system_prompt=payload.system_prompt)
-    report_id, persisted = maybe_save(db, "competitor_analysis", result, payload)
-    return attach_persistence_meta(result, report_id, persisted)
+    return run_endpoint_with_persistence(
+        db,
+        "competitor_analysis",
+        payload,
+        lambda: orchestrator.run_competitor_analysis(payload.user_content, system_prompt=payload.system_prompt),
+    )
 
 
 @app.post("/activity-workshop", dependencies=[Depends(verify_api_auth)])
 def activity_workshop(payload: TaskRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    result = orchestrator.run_activity_workshop(payload.user_content, system_prompt=payload.system_prompt)
-    report_id, persisted = maybe_save(db, "activity_workshop", result, payload)
-    return attach_persistence_meta(result, report_id, persisted)
+    return run_endpoint_with_persistence(
+        db,
+        "activity_workshop",
+        payload,
+        lambda: orchestrator.run_activity_workshop(payload.user_content, system_prompt=payload.system_prompt),
+    )
 
 
 @app.post("/rag-query", dependencies=[Depends(verify_api_auth)])
 def rag_query(payload: RagRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    result = orchestrator.query_rag(payload.user_question, payload.system_prompt)
-    report_id, persisted = maybe_save(db, "rag_query", result, payload)
-    return attach_persistence_meta(result, report_id, persisted)
-
+    return run_endpoint_with_persistence(
+        db,
+        "rag_query",
+        payload,
+        lambda: orchestrator.query_rag(payload.user_question, payload.system_prompt),
+    )

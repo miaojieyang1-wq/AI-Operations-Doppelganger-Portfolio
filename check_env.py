@@ -12,10 +12,12 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
+ENV_FILE = PROJECT_DIR / ".env"
 REQUIRED_DIRS = ["config", "works", "static"]
 OPTIONAL_ENV_VARS = [
     "DEEPSEEK_BASE_URL",
@@ -30,6 +32,21 @@ OPTIONAL_ENV_VARS = [
 ]
 
 
+def load_local_env() -> None:
+    """读取项目根目录 .env；不覆盖已经存在的系统环境变量。"""
+    if not ENV_FILE.exists():
+        return
+    for raw_line in ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def get_runtime_dir() -> Path:
     """返回用户级运行数据目录，不写入安装目录。"""
     override = os.getenv("AI_OPS_DATA_DIR", "").strip()
@@ -40,6 +57,14 @@ def get_runtime_dir() -> Path:
         if base:
             return Path(base) / "AI_Ops_Agent"
     return Path.home() / ".local" / "share" / "AI_Ops_Agent"
+
+
+def get_fallback_runtime_dirs() -> list[Path]:
+    """返回与 runtime_paths.py 保持一致的备用目录候选列表。"""
+    return [
+        Path.home() / ".AI_Ops_Agent",
+        Path(tempfile.gettempdir()) / "AI_Ops_Agent",
+    ]
 
 
 def check_python_version() -> tuple[bool, str]:
@@ -54,9 +79,17 @@ def check_runtime_writable(runtime_dir: Path) -> tuple[bool, str]:
     """检查运行目录是否可写。"""
     try:
         runtime_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=runtime_dir, delete=True):
-            pass
+        try:
+            next(runtime_dir.iterdir(), None)
+        except PermissionError:
+            return False, f"{runtime_dir} 不可读取，请检查文件夹权限"
+        test_file = runtime_dir / f".write_test_{uuid.uuid4().hex}.tmp"
+        fd = os.open(str(test_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        test_file.unlink(missing_ok=True)
         return True, str(runtime_dir)
+    except PermissionError as exc:
+        return False, f"{runtime_dir} 不可写入：{exc}"
     except OSError as exc:
         return False, f"{runtime_dir} 不可写：{exc}"
 
@@ -89,6 +122,7 @@ def print_result(ok: bool, message: str) -> None:
 
 def main() -> int:
     """执行环境检查。"""
+    load_local_env()
     has_error = False
 
     ok, message = check_python_version()
@@ -97,6 +131,13 @@ def main() -> int:
 
     runtime_dir = get_runtime_dir()
     ok, message = check_runtime_writable(runtime_dir)
+    if not ok and "AI_OPS_DATA_DIR" not in os.environ:
+        for fallback_dir in get_fallback_runtime_dirs():
+            fallback_ok, fallback_message = check_runtime_writable(fallback_dir)
+            if fallback_ok:
+                ok = True
+                message = f"{runtime_dir} 不可用，已验证备用目录：{fallback_message}"
+                break
     print_result(ok, f"运行数据目录：{message}" if ok else message)
     has_error = has_error or not ok
 

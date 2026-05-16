@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import tempfile
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -41,8 +43,54 @@ RUNTIME_ENV_FILE = USER_DATA_DIR / ".env"
 RUNTIME_SECURITY_FILE = USER_DATA_DIR / "security.json"
 
 
+def _fallback_user_data_dirs() -> list[Path]:
+    """返回备用运行数据目录候选列表。"""
+    return [
+        Path.home() / f".{APP_NAME}",
+        Path(tempfile.gettempdir()) / APP_NAME,
+    ]
+
+
+def _refresh_runtime_files() -> None:
+    """同步依赖 USER_DATA_DIR 的运行时文件路径。"""
+    global RUNTIME_ENV_FILE, RUNTIME_SECURITY_FILE
+    RUNTIME_ENV_FILE = USER_DATA_DIR / ".env"
+    RUNTIME_SECURITY_FILE = USER_DATA_DIR / "security.json"
+
+
+def _probe_runtime_dir(path: Path) -> None:
+    """快速验证目录是否可读写，避免在无权限目录中继续启动。"""
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        next(path.iterdir(), None)
+    except PermissionError as exc:
+        raise PermissionError(f"{path} is not readable") from exc
+    test_file = path / f".write_test_{uuid.uuid4().hex}.tmp"
+    fd = os.open(str(test_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    os.close(fd)
+    test_file.unlink(missing_ok=True)
+
+
 def ensure_runtime_dirs() -> Path:
     """创建用户数据目录及常用子目录。"""
+    global USER_DATA_DIR
+    try:
+        _probe_runtime_dir(USER_DATA_DIR)
+    except OSError:
+        if os.getenv("AI_OPS_DATA_DIR"):
+            raise
+        for fallback_dir in _fallback_user_data_dirs():
+            if USER_DATA_DIR == fallback_dir:
+                continue
+            try:
+                _probe_runtime_dir(fallback_dir)
+            except OSError:
+                continue
+            USER_DATA_DIR = fallback_dir
+            _refresh_runtime_files()
+            break
+        else:
+            raise
     for path in [
         USER_DATA_DIR,
         USER_DATA_DIR / "reports",

@@ -15,7 +15,6 @@ python health_check.py
 
 from __future__ import annotations
 
-import py_compile
 import os
 from pathlib import Path
 
@@ -117,8 +116,9 @@ def check_python_syntax() -> list[str]:
             issues.append(f"缺少文件：{filename}")
             continue
         try:
-            py_compile.compile(str(file_path), doraise=True)
-        except Exception as exc:
+            source = file_path.read_text(encoding="utf-8")
+            compile(source, str(file_path), "exec")
+        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
             issues.append(f"{filename} 语法检查失败：{exc}")
     return issues
 

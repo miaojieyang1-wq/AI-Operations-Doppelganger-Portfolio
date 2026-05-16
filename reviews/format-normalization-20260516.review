@@ -1,0 +1,33 @@
+# 审查报告：格式规范化与恢复
+
+## 审查范围
+
+- `agent_graph.py`
+- `runtime_paths.py`
+- `check_env.py`
+- `README.md`
+- `CHANGELOG.md`
+- `docs/decisions.md`
+
+## 发现的问题
+
+批量换行转换时，`agent_graph.py` 被误写为空文件，导致 `smoke_test.py` 中完整公式组直接读取场景失败。
+
+## 修复方式
+
+从本地 Git 对象库恢复 `agent_graph.py` 最近一次提交版本，避免依赖网络下载。恢复后文件大小为 14971 字节，并重新执行语法检查与冒烟测试。
+
+## 验证结果
+
+```bash
+python -m py_compile agent_graph.py runtime_paths.py check_env.py
+python smoke_test.py
+python health_check.py
+```
+
+上述检查均已通过。
+
+## 后续约束
+
+- 批量格式修复后必须立即执行 `smoke_test.py`。
+- 对核心入口文件执行格式转换前，应优先使用 Git 或备份文件确认可恢复。
