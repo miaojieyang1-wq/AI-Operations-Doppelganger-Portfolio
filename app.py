@@ -986,109 +986,140 @@ def update_runtime_status(
     }
 
 
+def get_runtime_api_text(status: dict) -> tuple[str, str, str]:
+    """格式化运行状态中的 API 结果、耗时和时间。"""
+    api_success = status.get("api_success")
+    if api_success is None:
+        api_text = "还没有开始"
+    else:
+        api_text = "成功" if api_success else "失败"
+
+    duration = status.get("duration")
+    duration_text = "暂无" if duration is None else f"{duration:.2f} 秒"
+    timestamp_text = status.get("timestamp") or "暂无"
+    return api_text, duration_text, timestamp_text
+
+
+def render_runtime_api_lines(status: dict) -> None:
+    """渲染运行状态中的调用方式、API 来源和最近调用结果。"""
+    api_text, duration_text, timestamp_text = get_runtime_api_text(status)
+    st.markdown(
+        f'<div class="status-line">当前调用方式：{"演示模式，本地预设结果" if demo_engine.is_demo_mode() else "实时调用 AI 服务"}</div>',
+        unsafe_allow_html=True,
+    )
+    api_config = get_effective_api_config()
+    api_source = "网页内配置" if st.session_state.get("user_api_key") else "本地环境配置"
+    st.markdown(
+        f'<div class="status-line">API连接来源：{api_source} · {mask_api_key(api_config["api_key"])}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(f'<div class="status-line">当前模型：{api_config["model"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="status-line">我是否顺利完成：{api_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="status-line">生成报告用时：{duration_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="status-line">最近处理时间：{timestamp_text}</div>', unsafe_allow_html=True)
+
+
+def render_runtime_graph_lines(status: dict) -> None:
+    """渲染 LangGraph 与 Prompt 模块状态。"""
+    st.markdown(
+        '<div class="status-line">流程编排状态：已启用 LangGraph 引擎</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="status-line">最近识别意图：{status.get("intent") or "暂无"}</div>',
+        unsafe_allow_html=True,
+    )
+    prompt_modules = get_agent_last_prompt_modules()
+    if prompt_modules:
+        st.markdown(
+            f'<div class="status-line">本次调用Prompt模块：{", ".join(prompt_modules)}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def build_knowledge_index_from_sidebar() -> None:
+    """从侧边栏触发知识库索引构建。"""
+    with st.spinner("正在构建知识库索引..."):
+        log_buffer = io.StringIO()
+        try:
+            import build_index
+
+            with contextlib.redirect_stdout(log_buffer), contextlib.redirect_stderr(log_buffer):
+                build_index.main()
+            st.code(log_buffer.getvalue() or "索引构建完成。", language="text")
+            st.success("知识库索引已更新。")
+        except Exception as exc:
+            st.code(log_buffer.getvalue(), language="text")
+            st.warning(f"知识库索引构建失败：{exc}")
+
+
+def render_runtime_knowledge_lines(knowledge_status: dict) -> None:
+    """渲染本地知识库状态和构建入口。"""
+    st.markdown(
+        f'<div class="status-line">知识库状态：已加载 {knowledge_status["chunk_count"]} 个文档块</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="status-line">知识库类型：本地轻量向量，不依赖外部 Embedding API</div>',
+        unsafe_allow_html=True,
+    )
+    if not knowledge_status["exists"]:
+        st.markdown(
+            f'<div class="status-muted">{knowledge_status["message"]}</div>',
+            unsafe_allow_html=True,
+        )
+        st.warning("知识库索引尚未构建，部分检索功能暂时不可用。")
+        if st.button("构建知识库索引", use_container_width=True, key="sidebar_build_index"):
+            build_knowledge_index_from_sidebar()
+
+
+def render_runtime_error(status: dict) -> None:
+    """渲染最近一次异常或无异常提示。"""
+    if status.get("error"):
+        st.markdown("需要查看的情况")
+        st.code(status["error"], language="text")
+    else:
+        st.markdown('<div class="status-muted">当前没有异常。</div>', unsafe_allow_html=True)
+
+
+def get_workflow_graph_text() -> str:
+    """获取 LangGraph 工作流图文本。"""
+    try:
+        from agent_graph import graph
+
+        return graph.get_graph().draw_mermaid()
+    except Exception:
+        try:
+            from agent_graph import graph
+
+            return graph.get_graph().draw_ascii()
+        except Exception:
+            return ""
+
+
+def render_workflow_graph_button() -> None:
+    """渲染工作流查看按钮。"""
+    if not st.button("📈 查看工作流", use_container_width=True):
+        return
+
+    workflow_text = get_workflow_graph_text()
+    if workflow_text:
+        st.code(workflow_text, language="text")
+    else:
+        st.warning("工作流图生成失败")
+
+
 def render_runtime_status() -> None:
     status = st.session_state.runtime_status
-    has_error = bool(status.get("error"))
-    dot = "🟡" if has_error else "🟢"
+    dot = "🟡" if status.get("error") else "🟢"
     knowledge_status = rag_engine.get_vectorstore_status()
 
     with st.expander(f"{dot} 运行状态 ▾", expanded=False):
-        api_success = status.get("api_success")
-        if api_success is None:
-            api_text = "还没有开始"
-        else:
-            api_text = "成功" if api_success else "失败"
-
-        duration = status.get("duration")
-        duration_text = "暂无" if duration is None else f"{duration:.2f} 秒"
-        timestamp_text = status.get("timestamp") or "暂无"
-
-        st.markdown(
-            f'<div class="status-line">当前调用方式：{"演示模式，本地预设结果" if demo_engine.is_demo_mode() else "实时调用 AI 服务"}</div>',
-            unsafe_allow_html=True,
-        )
-        api_config = get_effective_api_config()
-        api_source = "网页内配置" if st.session_state.get("user_api_key") else "本地环境配置"
-        st.markdown(
-            f'<div class="status-line">API连接来源：{api_source} · {mask_api_key(api_config["api_key"])}</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f'<div class="status-line">当前模型：{api_config["model"]}</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(f'<div class="status-line">我是否顺利完成：{api_text}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="status-line">生成报告用时：{duration_text}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="status-line">最近处理时间：{timestamp_text}</div>', unsafe_allow_html=True)
-        # 改动位置：展示 LangGraph 流程编排状态和最近一次识别出的意图。
-        st.markdown(
-            '<div class="status-line">流程编排状态：已启用 LangGraph 引擎</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f'<div class="status-line">最近识别意图：{status.get("intent") or "暂无"}</div>',
-            unsafe_allow_html=True,
-        )
-        prompt_modules = get_agent_last_prompt_modules()
-        if prompt_modules:
-            st.markdown(
-                f'<div class="status-line">本次调用Prompt模块：{", ".join(prompt_modules)}</div>',
-                unsafe_allow_html=True,
-            )
-        # 改动位置：在运行状态中展示 RAG 知识库是否已经构建。
-        st.markdown(
-            f'<div class="status-line">知识库状态：已加载 {knowledge_status["chunk_count"]} 个文档块</div>',
-            unsafe_allow_html=True,
-        )
-        # 改动位置：说明当前知识库使用完全本地的轻量向量方案。
-        st.markdown(
-            '<div class="status-line">知识库类型：本地轻量向量，不依赖外部 Embedding API</div>',
-            unsafe_allow_html=True,
-        )
-        if not knowledge_status["exists"]:
-            st.markdown(
-                f'<div class="status-muted">{knowledge_status["message"]}</div>',
-                unsafe_allow_html=True,
-            )
-            st.warning("知识库索引尚未构建，部分检索功能暂时不可用。")
-            if st.button("构建知识库索引", use_container_width=True, key="sidebar_build_index"):
-                with st.spinner("正在构建知识库索引..."):
-                    log_buffer = io.StringIO()
-                    try:
-                        import build_index
-
-                        with contextlib.redirect_stdout(log_buffer), contextlib.redirect_stderr(log_buffer):
-                            build_index.main()
-                        st.code(log_buffer.getvalue() or "索引构建完成。", language="text")
-                        st.success("知识库索引已更新。")
-                    except Exception as exc:
-                        st.code(log_buffer.getvalue(), language="text")
-                        st.warning(f"知识库索引构建失败：{exc}")
-
-        if has_error:
-            st.markdown("需要查看的情况")
-            st.code(status["error"], language="text")
-        else:
-            st.markdown('<div class="status-muted">当前没有异常。</div>', unsafe_allow_html=True)
-
-
-        if st.button("📈 查看工作流", use_container_width=True):
-            try:
-                from agent_graph import graph
-
-                workflow_text = graph.get_graph().draw_mermaid()
-            except Exception:
-                try:
-                    from agent_graph import graph
-
-                    workflow_text = graph.get_graph().draw_ascii()
-                except Exception:
-                    workflow_text = ""
-
-            if workflow_text:
-                st.code(workflow_text, language="text")
-            else:
-                st.warning("工作流图生成失败")
+        render_runtime_api_lines(status)
+        render_runtime_graph_lines(status)
+        render_runtime_knowledge_lines(knowledge_status)
+        render_runtime_error(status)
+        render_workflow_graph_button()
 
 
 def init_api_connection_state() -> None:
@@ -1193,121 +1224,102 @@ def render_api_connection_panel() -> None:
         render_api_connection_status()
 
 
-def render_sidebar() -> str:
-    with st.sidebar:
+def render_sidebar_brand() -> None:
+    """渲染侧边栏品牌区。"""
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+            <div class="sidebar-hello">👋</div>
+            <div class="sidebar-title">请选择模式</div>
+            <div class="sidebar-subtitle">先看人，或直接看我怎么做运营判断。</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_demo_mode_toggle() -> None:
+    """渲染演示模式开关和说明。"""
+    if "demo_mode" not in st.session_state:
+        st.session_state.demo_mode = False
+    demo_mode = st.toggle(
+        "演示模式",
+        value=st.session_state.demo_mode,
+        help="开启后，我会从本地 demo_responses.json 读取预设结果，不实时调用外部 AI 服务。适合面试、路演或网络不稳定时展示。",
+    )
+    st.session_state.demo_mode = demo_mode
+    os.environ["AI_OPS_DEMO_MODE"] = "1" if demo_mode else "0"
+    if demo_mode:
+        st.info("演示模式已开启：回答来自本地预设结果，适合稳定展示和离线容灾演示。")
+    else:
+        st.caption("实时模式：我会按当前配置调用 AI 服务生成结果。")
+    with st.expander("演示模式说明", expanded=False):
         st.markdown(
             """
-            <div class="sidebar-brand">
-                <div class="sidebar-hello">👋</div>
-                <div class="sidebar-title">请选择模式</div>
-                <div class="sidebar-subtitle">先看人，或直接看我怎么做运营判断。</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+            - 适合面试现场、网络不稳定或 API 额度不足时使用。
+            - 开启后，所有生成结果都从本地 `demo_responses.json` 读取。
+            - 这个设计用于证明项目考虑了稳定演示与离线容灾场景。
+            - 如果想看真实生成效果，请关闭演示模式后再提交问题。
+            """
         )
+
+
+def init_sidebar_mode() -> None:
+    """初始化侧边栏主模式。"""
+    if "dashboard_default_applied" not in st.session_state:
+        st.session_state.dashboard_default_applied = True
+        st.session_state.main_mode = "dashboard"
+    elif "main_mode" not in st.session_state:
+        st.session_state.main_mode = "dashboard"
+
+
+def render_sidebar_nav_button(label: str, mode: str) -> None:
+    """渲染一个侧边栏导航按钮。"""
+    selected = st.session_state.main_mode == mode
+    if st.button(label, type="primary" if selected else "secondary", use_container_width=True):
+        st.session_state.main_mode = mode
+        st.rerun()
+
+
+def render_sidebar_navigation() -> None:
+    """渲染侧边栏主导航。"""
+    render_sidebar_nav_button("🧭 运营决策中心", "dashboard")
+    render_sidebar_nav_button("💬 关于我", "about")
+    render_sidebar_nav_button("📊 进入版本决策", "work")
+    render_sidebar_nav_button("🔎 做一次用户洞察", "insight")
+    render_sidebar_nav_button("🎯 设计活动方案", "activity")
+    render_sidebar_nav_button("🛠️ 管理后台", "admin")
+
+
+def get_workflow_key_from_main_mode(main_mode: str) -> str:
+    """将侧边栏主模式映射为工作流 key。"""
+    mode_to_workflow = {
+        "dashboard": "dashboard",
+        "about": "personal",
+        "insight": "insight",
+        "activity": "activity",
+        "admin": "admin",
+    }
+    return mode_to_workflow.get(main_mode, "version")
+
+
+def render_sidebar_workflow_caption(workflow_key: str) -> None:
+    """渲染当前工作流说明。"""
+    if workflow_key in WORKFLOWS:
+        st.caption(WORKFLOWS[workflow_key]["description"])
+    else:
+        st.caption("查看报告、知识库、配置和缓存状态。")
+
+
+def render_sidebar() -> str:
+    with st.sidebar:
+        render_sidebar_brand()
         render_api_connection_panel()
-        # 改动位置：演示模式开关。开启后所有生成结果从本地 JSON 读取，保证现场演示稳定。
-        if "demo_mode" not in st.session_state:
-            st.session_state.demo_mode = False
-        demo_mode = st.toggle(
-            "演示模式",
-            value=st.session_state.demo_mode,
-            help="开启后，我会从本地 demo_responses.json 读取预设结果，不实时调用外部 AI 服务。适合面试、路演或网络不稳定时展示。",
-        )
-        st.session_state.demo_mode = demo_mode
-        os.environ["AI_OPS_DEMO_MODE"] = "1" if demo_mode else "0"
-        if demo_mode:
-            st.info("演示模式已开启：回答来自本地预设结果，适合稳定展示和离线容灾演示。")
-        else:
-            st.caption("实时模式：我会按当前配置调用 AI 服务生成结果。")
-        with st.expander("演示模式说明", expanded=False):
-            st.markdown(
-                """
-                - 适合面试现场、网络不稳定或 API 额度不足时使用。
-                - 开启后，所有生成结果都从本地 `demo_responses.json` 读取。
-                - 这个设计用于证明项目考虑了稳定演示与离线容灾场景。
-                - 如果想看真实生成效果，请关闭演示模式后再提交问题。
-                """
-            )
-
-        if "dashboard_default_applied" not in st.session_state:
-            st.session_state.dashboard_default_applied = True
-            st.session_state.main_mode = "dashboard"
-        elif "main_mode" not in st.session_state:
-            st.session_state.main_mode = "dashboard"
-
-        dashboard_selected = st.session_state.main_mode == "dashboard"
-        about_selected = st.session_state.main_mode == "about"
-        work_selected = st.session_state.main_mode == "work"
-        insight_selected = st.session_state.main_mode == "insight"
-        activity_selected = st.session_state.main_mode == "activity"
-        admin_selected = st.session_state.main_mode == "admin"
-
-        if st.button(
-            "🧭 运营决策中心",
-            type="primary" if dashboard_selected else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state.main_mode = "dashboard"
-            st.rerun()
-
-        if st.button(
-            "💬 关于我",
-            type="primary" if about_selected else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state.main_mode = "about"
-            st.rerun()
-
-        if st.button(
-            "📊 进入版本决策",
-            type="primary" if work_selected else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state.main_mode = "work"
-            st.rerun()
-
-        if st.button(
-            "🔎 做一次用户洞察",
-            type="primary" if insight_selected else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state.main_mode = "insight"
-            st.rerun()
-
-        if st.button(
-            "🎯 设计活动方案",
-            type="primary" if activity_selected else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state.main_mode = "activity"
-            st.rerun()
-
-        if st.button(
-            "🛠️ 管理后台",
-            type="primary" if admin_selected else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state.main_mode = "admin"
-            st.rerun()
-
-        if st.session_state.main_mode == "dashboard":
-            workflow_key = "dashboard"
-        elif st.session_state.main_mode == "about":
-            workflow_key = "personal"
-        elif st.session_state.main_mode == "insight":
-            workflow_key = "insight"
-        elif st.session_state.main_mode == "activity":
-            workflow_key = "activity"
-        elif st.session_state.main_mode == "admin":
-            workflow_key = "admin"
-        else:
-            workflow_key = "version"
-
-        if workflow_key in WORKFLOWS:
-            st.caption(WORKFLOWS[workflow_key]["description"])
-        else:
-            st.caption("查看报告、知识库、配置和缓存状态。")
+        render_demo_mode_toggle()
+        init_sidebar_mode()
+        render_sidebar_navigation()
+        workflow_key = get_workflow_key_from_main_mode(st.session_state.main_mode)
+        render_sidebar_workflow_caption(workflow_key)
         st.markdown("<br>", unsafe_allow_html=True)
         render_runtime_status()
 
@@ -1743,7 +1755,8 @@ def get_portfolio_items_by_signature(articles_dir_mtime: int, portfolio_config_m
     return items
 
 
-def render_personal_chat_form() -> tuple[str, str]:
+def render_personal_chat_header() -> None:
+    """渲染关于我问答的顶部说明。"""
     st.markdown(
         """
         <div class="task-panel">
@@ -1754,7 +1767,11 @@ def render_personal_chat_form() -> tuple[str, str]:
         """,
         unsafe_allow_html=True,
     )
-    preset_rows = [
+
+
+def get_personal_preset_rows() -> list[list[str]]:
+    """返回关于我模式的常见问题预设。"""
+    return [
         [
             "你做过什么实习？",
             "你怎么用AI做运营？",
@@ -1775,21 +1792,28 @@ def render_personal_chat_form() -> tuple[str, str]:
         ],
     ]
 
+
+def sync_pending_personal_question() -> None:
+    """将预设问题安全写入文本框状态。"""
     if "personal_question" not in st.session_state:
         st.session_state.personal_question = ""
     if "pending_personal_question" in st.session_state:
         st.session_state.personal_question = st.session_state.pop("pending_personal_question")
 
-    render_chat_history()
 
+def render_personal_question_input() -> str:
+    """渲染关于我模式的问题输入框。"""
     st.markdown('<div class="preset-title">向我提问</div>', unsafe_allow_html=True)
-    question = st.text_area(
+    return st.text_area(
         "你想让个人运营分身回答什么？",
         placeholder="例如：请帮我用面试口吻介绍这个作品集项目，突出我从音乐专业转向 AI/游戏运营的优势。",
         height=112,
         key="personal_question",
     )
 
+
+def render_personal_question_guides() -> None:
+    """渲染关于我模式的问题提示说明。"""
     st.markdown(
         '<div class="faq-hint">还没想好问什么？您可以试试展开下面的提示，选择一个真实面试的高频问题。</div>',
         unsafe_allow_html=True,
@@ -1798,8 +1822,12 @@ def render_personal_chat_form() -> tuple[str, str]:
         '<div class="portfolio-guide">想快速看项目成果？可以直接输入“介绍你的作品集”，我会优先介绍这个 AI 运营分身网站，再说明 SEO 提示词工程和文章作品分别验证的能力。</div>',
         unsafe_allow_html=True,
     )
+
+
+def render_personal_preset_questions() -> None:
+    """渲染常见问题按钮。"""
     with st.expander("查看常见问题", expanded=False):
-        for row_index, row in enumerate(preset_rows):
+        for row_index, row in enumerate(get_personal_preset_rows()):
             columns = st.columns(len(row))
             for column, preset_question in zip(columns, row):
                 with column:
@@ -1812,8 +1840,11 @@ def render_personal_chat_form() -> tuple[str, str]:
                         st.session_state.auto_submit_personal = True
                         st.rerun()
 
+
+def render_personal_extra_context_input() -> str:
+    """渲染关于我模式的补充场景输入框。"""
     with st.expander("可选：让回答更贴近你的场景", expanded=False):
-        extra = st.text_area(
+        return st.text_area(
             "如果您希望回答更加具有针对性，可以这样使用这个文本",
             help=(
                 "这里不是必填项。你可以写下这次回答的具体用途、目标岗位或希望强调的方向。"
@@ -1823,7 +1854,52 @@ def render_personal_chat_form() -> tuple[str, str]:
             placeholder="例如：请面向游戏运营岗位，更突出AI音乐产品实习和项目统筹能力。",
             height=110,
         )
+
+
+def render_personal_chat_form() -> tuple[str, str]:
+    render_personal_chat_header()
+    sync_pending_personal_question()
+    render_chat_history()
+    question = render_personal_question_input()
+    render_personal_question_guides()
+    render_personal_preset_questions()
+    extra = render_personal_extra_context_input()
     return question, extra
+
+
+def persist_personal_chat_result(user_content: str, extra_context: str, result: str) -> None:
+    """保存关于我模式的结果和对话历史。"""
+    st.session_state.last_report = result
+    st.session_state.last_workflow = "personal"
+    st.session_state.last_report_path = ""
+    agent_input = build_agent_input("personal", user_content, extra_context)
+    remember_agent_turn("personal", agent_input, result)
+    remember_display_turn("personal", user_content, result)
+
+
+def use_personal_local_fallback(user_content: str, extra_context: str, start_time: float, error: str, intent: str) -> None:
+    """使用关于我模式本地兜底回答并写入状态。"""
+    result = build_personal_local_fallback(user_content)
+    update_runtime_status(False, time.perf_counter() - start_time, error, intent)
+    persist_personal_chat_result(user_content, extra_context, result)
+    mark_result_ready()
+    st.rerun()
+
+
+def run_personal_agent_generation(user_content: str, extra_context: str) -> tuple[str, str, str]:
+    """执行关于我模式的 Agent 生成，失败时尝试直连兜底。"""
+    agent_input = build_agent_input("personal", user_content, extra_context)
+    try:
+        agent_messages = get_agent_messages("personal", agent_input)
+        result, detected_intent = run_agent_graph(agent_input, messages=agent_messages)
+        return result, detected_intent, ""
+    except Exception as agent_exc:
+        try:
+            result = call_direct_deepseek_fallback("personal", user_content, extra_context)
+            return result, "fallback:personal", ""
+        except Exception as exc:
+            error = f"LangGraph：{agent_exc}\n\nDeepSeek 兜底：{exc}"
+            return build_personal_local_fallback(user_content), "fallback:personal-local", error
 
 
 def run_personal_chat(user_content: str, extra_context: str) -> None:
@@ -1834,40 +1910,16 @@ def run_personal_chat(user_content: str, extra_context: str) -> None:
 
     start_time = time.perf_counter()
     if not has_available_model_access():
-        result = build_personal_local_fallback(user_content)
-        update_runtime_status(
-            api_success=False,
-            duration=time.perf_counter() - start_time,
-            error="未检测到可用 API Key，了解我模式已使用本地兜底回答。",
-            intent="fallback:personal-local",
+        use_personal_local_fallback(
+            user_content,
+            extra_context,
+            start_time,
+            "未检测到可用 API Key，了解我模式已使用本地兜底回答。",
+            "fallback:personal-local",
         )
-        st.session_state.last_report = result
-        st.session_state.last_workflow = "personal"
-        st.session_state.last_report_path = ""
-        agent_input = build_agent_input("personal", user_content, extra_context)
-        remember_agent_turn("personal", agent_input, result)
-        remember_display_turn("personal", user_content, result)
-        mark_result_ready()
-        st.rerun()
 
     with st.spinner("请您稍等片刻，回答马上就到🚅"):
-        try:
-            agent_input = build_agent_input("personal", user_content, extra_context)
-            agent_messages = get_agent_messages("personal", agent_input)
-            result, detected_intent = run_agent_graph(agent_input, messages=agent_messages)
-        except Exception as agent_exc:
-            try:
-                result = call_direct_deepseek_fallback("personal", user_content, extra_context)
-                detected_intent = "fallback:personal"
-            except Exception as exc:
-                result = build_personal_local_fallback(user_content)
-                detected_intent = "fallback:personal-local"
-                update_runtime_status(
-                    api_success=False,
-                    duration=time.perf_counter() - start_time,
-                    error=f"LangGraph：{agent_exc}\n\nDeepSeek 兜底：{exc}",
-                    intent=get_agent_last_intent(),
-                )
+        result, detected_intent, _generation_error = run_personal_agent_generation(user_content, extra_context)
 
     if not result:
         result = build_personal_local_fallback(user_content)
@@ -1876,11 +1928,7 @@ def run_personal_chat(user_content: str, extra_context: str) -> None:
     else:
         update_runtime_status(True, time.perf_counter() - start_time, "", detected_intent)
 
-    st.session_state.last_report = result
-    st.session_state.last_workflow = "personal"
-    st.session_state.last_report_path = ""
-    remember_agent_turn("personal", agent_input, result)
-    remember_display_turn("personal", user_content, result)
+    persist_personal_chat_result(user_content, extra_context, result)
     mark_result_ready()
     st.rerun()
 
@@ -2517,6 +2565,91 @@ def get_chart_font_properties_cached():
     return None
 
 
+def get_feedback_emotion_items() -> list[dict[str, object]]:
+    """反馈清洗图表的基础情绪分类配置。"""
+    return [
+        {"label": "愤怒", "aliases": ["😡", "愤怒"], "color": "#ef4444"},
+        {"label": "失望", "aliases": ["😞", "失望"], "color": "#8b5cf6"},
+        {"label": "困惑", "aliases": ["😕", "困惑"], "color": "#38bdf8"},
+        {"label": "焦虑", "aliases": ["😰", "焦虑"], "color": "#f97316"},
+        {"label": "中性", "aliases": ["😐", "中性"], "color": "#94a3b8"},
+        {"label": "满意", "aliases": ["😊", "满意"], "color": "#22c55e"},
+        {"label": "期待", "aliases": ["🎯", "期待"], "color": "#eab308"},
+        {"label": "调侃", "aliases": ["😂", "调侃"], "color": "#ec4899"},
+    ]
+
+
+def get_feedback_motive_items() -> list[dict[str, object]]:
+    """反馈清洗图表的发言动机分类配置。"""
+    return [
+        {"label": "建设性意见", "aliases": ["💡", "建设性意见型", "建设性意见"], "color": "#22c55e"},
+        {"label": "情绪发泄", "aliases": ["😤", "情绪发泄型", "情绪发泄"], "color": "#f97316"},
+        {"label": "乐子型", "aliases": ["🏴", "乐子型发言", "乐子型"], "color": "#94a3b8"},
+        {"label": "竞品拉踩", "aliases": ["⚔️", "竞品拉踩型发言", "竞品拉踩型", "竞品拉踩"], "color": "#ef4444"},
+        {"label": "思维发散", "aliases": ["🔮", "思维发散型", "思维发散"], "color": "#8b5cf6"},
+        {"label": "无特殊动机", "aliases": ["无特殊动机", "无动机", "普通反馈"], "color": "#38bdf8"},
+    ]
+
+
+def get_chart_colors(labels: list[str], items: list[dict[str, object]]) -> list[str]:
+    """根据分类标签读取图表颜色。"""
+    return [next(str(item["color"]) for item in items if item["label"] == label) for label in labels]
+
+
+def render_emotion_pie_chart(plt_module, emotion_values: dict[str, float], emotion_items: list[dict[str, object]], chart_font) -> None:
+    """渲染基础情绪分布饼图。"""
+    fig, ax = make_dark_figure(plt_module)
+    labels = list(emotion_values.keys())
+    values = list(emotion_values.values())
+    colors = get_chart_colors(labels, emotion_items)
+    _, texts, autotexts = ax.pie(
+        values,
+        labels=labels,
+        colors=colors,
+        autopct="%1.1f%%",
+        startangle=90,
+        textprops={"color": "#e5e7eb", "fontsize": 8, "fontproperties": chart_font},
+        wedgeprops={"linewidth": 1, "edgecolor": "#101828"},
+    )
+    for text in texts:
+        if chart_font:
+            text.set_fontproperties(chart_font)
+    for text in autotexts:
+        text.set_color("#ffffff")
+        text.set_fontweight("bold")
+        if chart_font:
+            text.set_fontproperties(chart_font)
+    ax.set_title("基础情绪分布", color="#f8fafc", fontsize=12, pad=10, fontproperties=chart_font)
+    st.pyplot(fig, use_container_width=True)
+    plt_module.close(fig)
+
+
+def render_motive_bar_chart(plt_module, motive_values: dict[str, float], motive_items: list[dict[str, object]], chart_font) -> None:
+    """渲染发言动机分布柱状图。"""
+    fig, ax = make_dark_figure(plt_module)
+    sorted_motives = sorted(motive_values.items(), key=lambda item: item[1], reverse=True)
+    labels = [item[0] for item in sorted_motives]
+    values = [item[1] for item in sorted_motives]
+    colors = get_chart_colors(labels, motive_items)
+    ax.bar(labels, values, color=colors)
+    ax.set_title("发言动机分布", color="#f8fafc", fontsize=12, pad=10, fontproperties=chart_font)
+    ax.tick_params(axis="x", colors="#e5e7eb", labelrotation=25, labelsize=8)
+    ax.tick_params(axis="y", colors="#e5e7eb", labelsize=8)
+    for label in ax.get_xticklabels():
+        if chart_font:
+            label.set_fontproperties(chart_font)
+    for label in ax.get_yticklabels():
+        if chart_font:
+            label.set_fontproperties(chart_font)
+    ax.grid(axis="y", color="#344054", linewidth=0.8, alpha=0.65)
+    for spine in ax.spines.values():
+        spine.set_color("#344054")
+    for index, value in enumerate(values):
+        ax.text(index, value, f"{value:g}", ha="center", va="bottom", color="#f8fafc", fontsize=8)
+    st.pyplot(fig, use_container_width=True)
+    plt_module.close(fig)
+
+
 def render_feedback_clean_charts(report_text: str) -> None:
     """在反馈清洗报告下方生成情绪分布和发言动机分布图表。"""
     try:
@@ -2527,26 +2660,8 @@ def render_feedback_clean_charts(report_text: str) -> None:
 
     chart_font = get_chart_font_properties()
     plt.rcParams["axes.unicode_minus"] = False
-
-    emotion_items = [
-        {"label": "愤怒", "aliases": ["😡", "愤怒"], "color": "#ef4444"},
-        {"label": "失望", "aliases": ["😞", "失望"], "color": "#8b5cf6"},
-        {"label": "困惑", "aliases": ["😕", "困惑"], "color": "#38bdf8"},
-        {"label": "焦虑", "aliases": ["😰", "焦虑"], "color": "#f97316"},
-        {"label": "中性", "aliases": ["😐", "中性"], "color": "#94a3b8"},
-        {"label": "满意", "aliases": ["😊", "满意"], "color": "#22c55e"},
-        {"label": "期待", "aliases": ["🎯", "期待"], "color": "#eab308"},
-        {"label": "调侃", "aliases": ["😂", "调侃"], "color": "#ec4899"},
-    ]
-    motive_items = [
-        {"label": "建设性意见", "aliases": ["💡", "建设性意见型", "建设性意见"], "color": "#22c55e"},
-        {"label": "情绪发泄", "aliases": ["😤", "情绪发泄型", "情绪发泄"], "color": "#f97316"},
-        {"label": "乐子型", "aliases": ["🏴", "乐子型发言", "乐子型"], "color": "#94a3b8"},
-        {"label": "竞品拉踩", "aliases": ["⚔️", "竞品拉踩型发言", "竞品拉踩型", "竞品拉踩"], "color": "#ef4444"},
-        {"label": "思维发散", "aliases": ["🔮", "思维发散型", "思维发散"], "color": "#8b5cf6"},
-        {"label": "无特殊动机", "aliases": ["无特殊动机", "无动机", "普通反馈"], "color": "#38bdf8"},
-    ]
-
+    emotion_items = get_feedback_emotion_items()
+    motive_items = get_feedback_motive_items()
     emotion_values, emotion_estimated = parse_distribution_from_report(report_text, emotion_items)
     motive_values, motive_estimated = parse_distribution_from_report(report_text, motive_items)
     if not emotion_values or not motive_values:
@@ -2555,56 +2670,10 @@ def render_feedback_clean_charts(report_text: str) -> None:
 
     st.markdown('<div class="section-title">反馈数据可视化</div>', unsafe_allow_html=True)
     left_col, right_col = st.columns(2)
-
     with left_col:
-        fig, ax = make_dark_figure(plt)
-        labels = list(emotion_values.keys())
-        values = list(emotion_values.values())
-        colors = [next(item["color"] for item in emotion_items if item["label"] == label) for label in labels]
-        wedges, texts, autotexts = ax.pie(
-            values,
-            labels=labels,
-            colors=colors,
-            autopct="%1.1f%%",
-            startangle=90,
-            textprops={"color": "#e5e7eb", "fontsize": 8, "fontproperties": chart_font},
-            wedgeprops={"linewidth": 1, "edgecolor": "#101828"},
-        )
-        for text in texts:
-            if chart_font:
-                text.set_fontproperties(chart_font)
-        for text in autotexts:
-            text.set_color("#ffffff")
-            text.set_fontweight("bold")
-            if chart_font:
-                text.set_fontproperties(chart_font)
-        ax.set_title("基础情绪分布", color="#f8fafc", fontsize=12, pad=10, fontproperties=chart_font)
-        st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
-
+        render_emotion_pie_chart(plt, emotion_values, emotion_items, chart_font)
     with right_col:
-        fig, ax = make_dark_figure(plt)
-        sorted_motives = sorted(motive_values.items(), key=lambda item: item[1], reverse=True)
-        labels = [item[0] for item in sorted_motives]
-        values = [item[1] for item in sorted_motives]
-        colors = [next(item["color"] for item in motive_items if item["label"] == label) for label in labels]
-        ax.bar(labels, values, color=colors)
-        ax.set_title("发言动机分布", color="#f8fafc", fontsize=12, pad=10, fontproperties=chart_font)
-        ax.tick_params(axis="x", colors="#e5e7eb", labelrotation=25, labelsize=8)
-        ax.tick_params(axis="y", colors="#e5e7eb", labelsize=8)
-        for label in ax.get_xticklabels():
-            if chart_font:
-                label.set_fontproperties(chart_font)
-        for label in ax.get_yticklabels():
-            if chart_font:
-                label.set_fontproperties(chart_font)
-        ax.grid(axis="y", color="#344054", linewidth=0.8, alpha=0.65)
-        for spine in ax.spines.values():
-            spine.set_color("#344054")
-        for index, value in enumerate(values):
-            ax.text(index, value, f"{value:g}", ha="center", va="bottom", color="#f8fafc", fontsize=8)
-        st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
+        render_motive_bar_chart(plt, motive_values, motive_items, chart_font)
 
     if emotion_estimated or motive_estimated:
         st.caption("基于AI分析结果估算，仅供参考")
@@ -2797,12 +2866,19 @@ def read_competitor_file_by_signature(file_path_text: str, file_mtime_ns: int, f
     return Path(file_path_text).read_text(encoding="utf-8", errors="replace")
 
 
-def render_collaboration_discussion() -> None:
-    """版本决策子功能：多职能协作讨论模式。"""
-    st.markdown('<div class="section-title">多职能协作讨论</div>', unsafe_allow_html=True)
+def get_collaboration_default_announcement() -> tuple[str, bool]:
+    """返回协作讨论默认输入和是否来自竞品雷达基准。"""
     baseline = st.session_state.get("version_to_competitor_baseline", "")
-    default_announcement = baseline if baseline else st.session_state.get("version_decision_announcement", "")
     if baseline:
+        return baseline, True
+    return st.session_state.get("version_decision_announcement", ""), False
+
+
+def render_collaboration_inputs() -> tuple[str, list[str], str]:
+    """渲染协作讨论输入区。"""
+    st.markdown('<div class="section-title">多职能协作讨论</div>', unsafe_allow_html=True)
+    default_announcement, has_baseline = get_collaboration_default_announcement()
+    if has_baseline:
         st.info("已检测到竞品雷达中的自家版本基准，可直接作为本次协作讨论输入。")
 
     announcement = st.text_area(
@@ -2832,52 +2908,100 @@ def render_collaboration_discussion() -> None:
             key="collaboration_custom_goal",
         )
     final_goal = custom_goal.strip() if selected_goal == "用户自定义" and custom_goal.strip() else selected_goal
+    return announcement, selected_role_names, final_goal
 
-    if st.button("开始协作分析", type="primary", use_container_width=True, key="collaboration_submit"):
-        if not announcement.strip():
-            st.warning("请先输入版本公告或自家版本分析基准。")
-            return
-        selected_roles = [get_collaboration_role_by_name(name) for name in selected_role_names]
-        selected_roles = [role for role in selected_roles if role]
-        if not selected_roles:
-            st.warning("请至少选择一个参与讨论的职能角色。")
-            return
 
-        start_time = time.perf_counter()
-        progress_slot = st.empty()
-        progress_bar = st.progress(0)
-        total_count = len(selected_roles)
-        progress_slot.info(f"各职能角色正在从各自视角分析中...共 {total_count} 个角色")
-        try:
-            collaboration_payload = ORCHESTRATOR.run_collaboration(announcement, selected_roles, final_goal)
-        except Exception as exc:
-            update_runtime_status(False, time.perf_counter() - start_time, str(exc), "version:collaboration")
-            st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
-            return
+def get_selected_collaboration_roles(selected_role_names: list[str]) -> list[dict]:
+    """根据角色名称过滤出有效协作角色。"""
+    selected_roles = [get_collaboration_role_by_name(name) for name in selected_role_names]
+    return [role for role in selected_roles if role]
 
-        progress_bar.progress(1.0)
-        progress_slot.info(f"协调者已根据 {final_goal} 整合各职能观点")
-        role_results = collaboration_payload.get("role_results", [])
-        coordinator_result = collaboration_payload.get("coordinator_result", "")
-        coordinator_error = collaboration_payload.get("coordinator_error", "")
-        total_count = len(role_results) or total_count
-        fail_count = sum(1 for item in role_results if not item.get("success"))
-        raw_report = build_collaboration_markdown(role_results, coordinator_result, final_goal)
-        st.session_state.collaboration_results = role_results
-        st.session_state.collaboration_goal_final = final_goal
-        st.session_state.collaboration_coordinator_result = coordinator_result
-        st.session_state.collaboration_coordinator_error = coordinator_error
-        st.session_state.collaboration_warning_enabled = is_data_source_warning_enabled()
-        st.session_state.collaboration_report_path = ""
-        update_runtime_status(
-            api_success=fail_count == 0 and not coordinator_error,
-            duration=time.perf_counter() - start_time,
-            error=coordinator_error,
-            intent="version:collaboration",
-        )
-        mark_result_ready()
-        st.rerun()
 
+def validate_collaboration_request(announcement: str, selected_roles: list[dict]) -> bool:
+    """校验协作讨论请求是否可提交。"""
+    if not announcement.strip():
+        st.warning("请先输入版本公告或自家版本分析基准。")
+        return False
+    if not selected_roles:
+        st.warning("请至少选择一个参与讨论的职能角色。")
+        return False
+    return True
+
+
+def run_collaboration_generation(announcement: str, selected_role_names: list[str], final_goal: str) -> bool:
+    """执行多职能协作分析，成功时写入会话状态。"""
+    selected_roles = get_selected_collaboration_roles(selected_role_names)
+    if not validate_collaboration_request(announcement, selected_roles):
+        return False
+
+    start_time = time.perf_counter()
+    progress_slot = st.empty()
+    progress_bar = st.progress(0)
+    progress_slot.info(f"各职能角色正在从各自视角分析中...共 {len(selected_roles)} 个角色")
+    try:
+        collaboration_payload = ORCHESTRATOR.run_collaboration(announcement, selected_roles, final_goal)
+    except Exception as exc:
+        update_runtime_status(False, time.perf_counter() - start_time, str(exc), "version:collaboration")
+        st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
+        return False
+
+    progress_bar.progress(1.0)
+    progress_slot.info(f"协调者已根据 {final_goal} 整合各职能观点")
+    role_results = collaboration_payload.get("role_results", [])
+    coordinator_result = collaboration_payload.get("coordinator_result", "")
+    coordinator_error = collaboration_payload.get("coordinator_error", "")
+    fail_count = sum(1 for item in role_results if not item.get("success"))
+    st.session_state.collaboration_results = role_results
+    st.session_state.collaboration_goal_final = final_goal
+    st.session_state.collaboration_coordinator_result = coordinator_result
+    st.session_state.collaboration_coordinator_error = coordinator_error
+    st.session_state.collaboration_warning_enabled = is_data_source_warning_enabled()
+    st.session_state.collaboration_report_path = ""
+    update_runtime_status(
+        api_success=fail_count == 0 and not coordinator_error,
+        duration=time.perf_counter() - start_time,
+        error=coordinator_error,
+        intent="version:collaboration",
+    )
+    return True
+
+
+def render_collaboration_role_result(item: dict) -> None:
+    """渲染单个职能角色的协作结果。"""
+    role = item["role"]
+    suffix = "（视角建议）" if item.get("is_suggestion") else ""
+    if not item.get("success"):
+        suffix = "（生成失败）"
+    with st.expander(f"{role['emoji']} {role['name']}{suffix}", expanded=False):
+        if item.get("is_suggestion"):
+            st.caption("该角色认为公告信息不足，因此以下内容作为视角建议参考。")
+            escaped_content = html.escape(item.get("content", "该视角分析生成失败")).replace("\n", "<br>")
+            st.markdown(
+                f'<div style="border:1px dashed #f59e0b;border-radius:8px;padding:0.85rem;background:#fffbeb;line-height:1.7;">{escaped_content}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(format_report_markdown(item.get("content", "该视角分析生成失败")))
+
+
+def save_collaboration_report_from_state(
+    full_report: str,
+    goal_text: str,
+    role_results: list[dict],
+    coordinator_result: str,
+) -> None:
+    """保存协作讨论报告并记录路径。"""
+    report_to_save = prepare_analysis_report_for_save(
+        full_report,
+        "collaboration",
+        include_warning=st.session_state.get("collaboration_warning_enabled", is_data_source_warning_enabled()),
+    )
+    report_path = save_collaboration_report(report_to_save, goal_text, role_results, coordinator_result)
+    st.session_state.collaboration_report_path = str(report_path)
+
+
+def render_collaboration_result(final_goal: str) -> None:
+    """渲染协作讨论结果和保存入口。"""
     role_results = st.session_state.get("collaboration_results", [])
     coordinator_result = st.session_state.get("collaboration_coordinator_result", "")
     goal_text = st.session_state.get("collaboration_goal_final", final_goal)
@@ -2897,38 +3021,14 @@ def render_collaboration_discussion() -> None:
         st.markdown(f"[前往 reports 文件夹]({reports_folder_link()})")
 
     for item in role_results:
-        role = item["role"]
-        suffix = "（视角建议）" if item.get("is_suggestion") else ""
-        if not item.get("success"):
-            suffix = "（生成失败）"
-        with st.expander(f"{role['emoji']} {role['name']}{suffix}", expanded=False):
-            if item.get("is_suggestion"):
-                st.caption("该角色认为公告信息不足，因此以下内容作为视角建议参考。")
-                escaped_content = html.escape(item.get("content", "该视角分析生成失败")).replace("\n", "<br>")
-                st.markdown(
-                    f'<div style="border:1px dashed #f59e0b;border-radius:8px;padding:0.85rem;background:#fffbeb;line-height:1.7;">{escaped_content}</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(format_report_markdown(item.get("content", "该视角分析生成失败")))
+        render_collaboration_role_result(item)
 
     st.markdown(f"### ⚖️ 协调者综合建议（目标：{goal_text}）")
     st.markdown(format_report_markdown(ensure_data_source_declaration(coordinator_result)))
     full_report = build_collaboration_markdown(role_results, coordinator_result, goal_text)
     if st.button("保存协作报告", type="primary", use_container_width=True, key="save_collaboration_report"):
         with st.spinner("正在保存协作报告..."):
-            report_to_save = prepare_analysis_report_for_save(
-                full_report,
-                "collaboration",
-                include_warning=st.session_state.get("collaboration_warning_enabled", is_data_source_warning_enabled()),
-            )
-            report_path = save_collaboration_report(
-                report_to_save,
-                goal_text,
-                role_results,
-                coordinator_result,
-            )
-            st.session_state.collaboration_report_path = str(report_path)
+            save_collaboration_report_from_state(full_report, goal_text, role_results, coordinator_result)
         st.success("报告已保存到 reports/collaboration/")
     st.text_area(
         "复制协作讨论报告",
@@ -2937,6 +3037,19 @@ def render_collaboration_discussion() -> None:
         key="collaboration_copy",
     )
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_collaboration_discussion() -> None:
+    """版本决策子功能：多职能协作讨论模式。"""
+    announcement, selected_role_names, final_goal = render_collaboration_inputs()
+
+    if st.button("开始协作分析", type="primary", use_container_width=True, key="collaboration_submit"):
+        if not run_collaboration_generation(announcement, selected_role_names, final_goal):
+            return
+        mark_result_ready()
+        st.rerun()
+
+    render_collaboration_result(final_goal)
 
 
 def render_version_analysis_tab() -> None:
@@ -3128,8 +3241,8 @@ def render_version_decision() -> None:
         render_collaboration_discussion()
 
 
-def render_activity_workshop() -> None:
-    """活动策划模式：根据活动目标和活动背景生成可导出的活动方案。"""
+def render_activity_header() -> None:
+    """渲染活动策划模式的顶部说明。"""
     st.markdown(
         """
         <div class="task-panel">
@@ -3141,6 +3254,9 @@ def render_activity_workshop() -> None:
         unsafe_allow_html=True,
     )
 
+
+def render_activity_inputs() -> tuple[str, str]:
+    """渲染活动策划输入区并返回用户输入。"""
     st.markdown('<div class="section-title">活动需求</div>', unsafe_allow_html=True)
     activity_goal = st.text_area(
         "请描述你想策划的活动目标",
@@ -3154,13 +3270,12 @@ def render_activity_workshop() -> None:
         height=130,
         key="activity_background",
     )
+    return activity_goal, activity_background
 
-    if st.button("生成活动方案", type="primary", use_container_width=True, key="activity_submit"):
-        if not activity_goal.strip():
-            st.warning("请先输入活动目标或活动需求。")
-            return
 
-        fallback_prompt = """
+def get_activity_workshop_prompt() -> str:
+    """读取活动策划提示词，配置缺失时使用代码兜底。"""
+    fallback_prompt = """
 你是一名游戏运营活动策划助手。请基于用户提供的活动目标和可选活动背景，生成一份可执行、可复盘的活动方案。
 输出必须包含以下模块，并用分隔线隔开：
 1. 活动主题与核心玩法概述：说明活动主题、核心循环和用户为什么愿意参与。
@@ -3174,42 +3289,58 @@ def render_activity_workshop() -> None:
 9. 后续追踪建议：作为方案末尾的独立区块，必须紧扣前文活动主题、用户参与路径、奖励梯度和风险预案，说明活动落地后应该关注哪些指标、在什么时间节点做复盘、用什么信号判断是否需要调整。至少覆盖上线首日、活动中期、活动结束后复盘三个节点。不要另起新方案，不要脱离本活动泛泛而谈；如果缺少历史基准，请明确写出需要补充哪些数据，不要编造具体内部数值。
 要求：语言具体、面向执行，不要写空泛口号；如果信息不足，请基于常见游戏运营场景给出合理假设，并标明是假设。
 """
-        system_prompt = read_prompt_file("tasks/activity_workshop", fallback_prompt)
-        user_content = (
-            f"活动目标：\n{activity_goal.strip()}\n\n"
-            f"活动背景（可选）：\n{activity_background.strip() or '用户没有补充活动背景，请根据活动目标合理假设。'}"
-        )
+    return read_prompt_file("tasks/activity_workshop", fallback_prompt)
 
-        start_time = time.perf_counter()
-        with st.spinner("请您稍等片刻，活动方案马上就到🚅"):
-            try:
-                # 改动位置：活动策划模式从 YAML 配置读取系统提示词，并把活动背景作为约束传入。
-                result = run_agent_task("activity:workshop", user_content, system_prompt)
-            except Exception as exc:
-                update_runtime_status(
-                    api_success=False,
-                    duration=time.perf_counter() - start_time,
-                    error=str(exc),
-                    intent="activity:workshop",
-                )
-                st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
-                return
 
-        st.session_state.activity_plan_result = result
-        st.session_state.activity_plan_result_warning_enabled = is_data_source_warning_enabled()
-        st.session_state.activity_plan_path = ""
-        update_runtime_status(
-            api_success=True,
-            duration=time.perf_counter() - start_time,
-            error="",
-            intent="activity:workshop",
-        )
-        mark_result_ready()
-        st.rerun()
+def build_activity_user_content(activity_goal: str, activity_background: str) -> str:
+    """组装活动策划任务输入。"""
+    return (
+        f"活动目标：\n{activity_goal.strip()}\n\n"
+        f"活动背景（可选）：\n{activity_background.strip() or '用户没有补充活动背景，请根据活动目标合理假设。'}"
+    )
 
+
+def run_activity_generation(activity_goal: str, activity_background: str) -> bool:
+    """执行活动方案生成，成功时写入会话状态。"""
+    if not activity_goal.strip():
+        st.warning("请先输入活动目标或活动需求。")
+        return False
+
+    system_prompt = get_activity_workshop_prompt()
+    user_content = build_activity_user_content(activity_goal, activity_background)
+
+    start_time = time.perf_counter()
+    with st.spinner("请您稍等片刻，活动方案马上就到🚅"):
+        try:
+            result = run_agent_task("activity:workshop", user_content, system_prompt)
+        except Exception as exc:
+            update_runtime_status(
+                api_success=False,
+                duration=time.perf_counter() - start_time,
+                error=str(exc),
+                intent="activity:workshop",
+            )
+            st.warning("非常抱歉！分析引擎暂时遇到点小问题，请您稍后再试")
+            return False
+
+    st.session_state.activity_plan_result = result
+    st.session_state.activity_plan_result_warning_enabled = is_data_source_warning_enabled()
+    st.session_state.activity_plan_path = ""
+    update_runtime_status(
+        api_success=True,
+        duration=time.perf_counter() - start_time,
+        error="",
+        intent="activity:workshop",
+    )
+    return True
+
+
+def render_activity_result() -> None:
+    """渲染活动方案结果与导出入口。"""
     result = st.session_state.get("activity_plan_result", "")
     if not result:
         return
+
     display_result = ensure_data_source_declaration(result)
 
     render_result_anchor()
@@ -3227,14 +3358,7 @@ def render_activity_workshop() -> None:
     )
 
     if st.button("导出为Markdown", use_container_width=True, key="activity_export_markdown"):
-        # 改动位置：活动方案导出到独立的 activity_plans/ 文件夹，便于和分析报告区分。
-        export_text = prepare_analysis_report_for_save(
-            display_result,
-            "activity",
-            include_warning=is_data_source_warning_enabled(),
-        )
-        exported_path = save_activity_markdown(export_text)
-        st.session_state.activity_plan_path = str(exported_path)
+        export_activity_markdown(display_result)
         st.rerun()
 
     exported_path = st.session_state.get("activity_plan_path", "")
@@ -3243,6 +3367,31 @@ def render_activity_workshop() -> None:
         st.markdown(f"[前往 activity_plans 文件夹]({activity_folder_link()})")
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def export_activity_markdown(display_result: str) -> None:
+    """保存活动方案 Markdown 并记录导出路径。"""
+    export_text = prepare_analysis_report_for_save(
+        display_result,
+        "activity",
+        include_warning=is_data_source_warning_enabled(),
+    )
+    exported_path = save_activity_markdown(export_text)
+    st.session_state.activity_plan_path = str(exported_path)
+
+
+def render_activity_workshop() -> None:
+    """活动策划模式：根据活动目标和活动背景生成可导出的活动方案。"""
+    render_activity_header()
+    activity_goal, activity_background = render_activity_inputs()
+
+    if st.button("生成活动方案", type="primary", use_container_width=True, key="activity_submit"):
+        if not run_activity_generation(activity_goal, activity_background):
+            return
+        mark_result_ready()
+        st.rerun()
+
+    render_activity_result()
 
 
 def render_workflow(workflow_key: str) -> tuple[str, str, str]:
@@ -3404,56 +3553,64 @@ def render_admin_system_info() -> None:
         st.caption(f"{label}：{value}")
 
 
-def render_admin_mode() -> None:
-    """Lightweight admin area for system overview, knowledge base and config checks."""
-    st.markdown('<div class="section-title">管理后台</div>', unsafe_allow_html=True)
-    if not is_admin_ready():
-        st.warning("\u7ba1\u7406\u540e\u53f0\u5c1a\u672a\u5b8c\u6210\u5b89\u5168\u521d\u59cb\u5316\u3002\u8bf7\u5148\u8bbe\u7f6e\u540e\u53f0\u5bc6\u7801\uff0c\u5bc6\u7801\u53ea\u4f1a\u4ee5\u5e26\u76d0\u54c8\u5e0c\u5f62\u5f0f\u4fdd\u5b58\u5728\u7528\u6237\u6570\u636e\u76ee\u5f55\u3002")
-        new_password = st.text_input("\u8bbe\u7f6e\u7ba1\u7406\u540e\u53f0\u5bc6\u7801", type="password", key="admin_init_password")
-        confirm_password = st.text_input("\u518d\u6b21\u8f93\u5165\u5bc6\u7801", type="password", key="admin_init_password_confirm")
-        if st.button("\u5b8c\u6210\u540e\u53f0\u521d\u59cb\u5316", type="primary", use_container_width=True, key="admin_init_submit"):
-            if len(new_password) < 8:
-                st.warning("\u5bc6\u7801\u81f3\u5c11\u9700\u8981 8 \u4f4d\u3002")
-            elif new_password != confirm_password:
-                st.warning("\u4e24\u6b21\u8f93\u5165\u7684\u5bc6\u7801\u4e0d\u4e00\u81f4\u3002")
-            else:
-                security_utils.set_admin_password(new_password)
-                st.session_state.admin_unlocked = True
-                st.success("\u540e\u53f0\u5bc6\u7801\u5df2\u8bbe\u7f6e\u3002")
-                st.rerun()
+def render_admin_initialization() -> None:
+    """渲染管理后台首次初始化。"""
+    st.warning("\u7ba1\u7406\u540e\u53f0\u5c1a\u672a\u5b8c\u6210\u5b89\u5168\u521d\u59cb\u5316\u3002\u8bf7\u5148\u8bbe\u7f6e\u540e\u53f0\u5bc6\u7801\uff0c\u5bc6\u7801\u53ea\u4f1a\u4ee5\u5e26\u76d0\u54c8\u5e0c\u5f62\u5f0f\u4fdd\u5b58\u5728\u7528\u6237\u6570\u636e\u76ee\u5f55\u3002")
+    new_password = st.text_input("\u8bbe\u7f6e\u7ba1\u7406\u540e\u53f0\u5bc6\u7801", type="password", key="admin_init_password")
+    confirm_password = st.text_input("\u518d\u6b21\u8f93\u5165\u5bc6\u7801", type="password", key="admin_init_password_confirm")
+    if not st.button("\u5b8c\u6210\u540e\u53f0\u521d\u59cb\u5316", type="primary", use_container_width=True, key="admin_init_submit"):
         return
+    if len(new_password) < 8:
+        st.warning("\u5bc6\u7801\u81f3\u5c11\u9700\u8981 8 \u4f4d\u3002")
+    elif new_password != confirm_password:
+        st.warning("\u4e24\u6b21\u8f93\u5165\u7684\u5bc6\u7801\u4e0d\u4e00\u81f4\u3002")
+    else:
+        security_utils.set_admin_password(new_password)
+        st.session_state.admin_unlocked = True
+        st.success("\u540e\u53f0\u5bc6\u7801\u5df2\u8bbe\u7f6e\u3002")
+        st.rerun()
 
-    if not st.session_state.get("admin_unlocked", False):
-        password = st.text_input("\u8bf7\u8f93\u5165\u7ba1\u7406\u540e\u53f0\u5bc6\u7801", type="password", key="admin_password_input")
-        if st.button("\u8fdb\u5165\u7ba1\u7406\u540e\u53f0", type="primary", use_container_width=True, key="admin_login"):
-            if security_utils.verify_admin_password(password):
-                st.session_state.admin_unlocked = True
-                st.rerun()
-            st.warning("\u5bc6\u7801\u4e0d\u6b63\u786e\uff0c\u8bf7\u91cd\u65b0\u8f93\u5165\u3002")
-        st.caption("演示入口：这是作品集展示中的模拟安全策略，用于让面试官快速查看后台结构；真实部署时应关闭此入口，仅保留密码或企业统一认证。")
-        if st.button("演示模式：直接进入管理后台", use_container_width=True, key="admin_demo_login"):
+
+def render_admin_login() -> None:
+    """渲染管理后台登录区。"""
+    password = st.text_input("\u8bf7\u8f93\u5165\u7ba1\u7406\u540e\u53f0\u5bc6\u7801", type="password", key="admin_password_input")
+    if st.button("\u8fdb\u5165\u7ba1\u7406\u540e\u53f0", type="primary", use_container_width=True, key="admin_login"):
+        if security_utils.verify_admin_password(password):
             st.session_state.admin_unlocked = True
             st.rerun()
-        return
+        st.warning("\u5bc6\u7801\u4e0d\u6b63\u786e\uff0c\u8bf7\u91cd\u65b0\u8f93\u5165\u3002")
+    st.caption("演示入口：这是作品集展示中的模拟安全策略，用于让面试官快速查看后台结构；真实部署时应关闭此入口，仅保留密码或企业统一认证。")
+    if st.button("演示模式：直接进入管理后台", use_container_width=True, key="admin_demo_login"):
+        st.session_state.admin_unlocked = True
+        st.rerun()
 
-    st.markdown("### 系统概览仪表盘")
-    render_admin_system_info()
+
+def clear_local_saved_reports() -> int:
+    """清理用户数据目录内的本地报告与活动方案。"""
+    deleted = 0
+    for folder in [REPORT_DIR, ACTIVITY_PLAN_DIR]:
+        resolved_folder = folder.resolve()
+        if folder.exists() and runtime_paths.USER_DATA_DIR.resolve() in resolved_folder.parents:
+            for item in folder.rglob("*"):
+                if item.is_file():
+                    item.unlink()
+                    deleted += 1
+    return deleted
+
+
+def render_admin_data_retention() -> None:
+    """渲染管理后台数据保留策略。"""
     with st.expander("\u6570\u636e\u4fdd\u7559\u7b56\u7565", expanded=False):
         st.write("\u804a\u5929\u548c\u5206\u6790\u7ed3\u679c\u9ed8\u8ba4\u53ea\u5728\u9875\u9762\u5c55\u793a\u3002\u53ea\u6709\u70b9\u51fb\u4fdd\u5b58\u6216\u5bfc\u51fa\u65f6\uff0c\u624d\u4f1a\u5199\u5165\u7528\u6237\u6570\u636e\u76ee\u5f55\u3002")
         st.caption(f"\u7528\u6237\u6570\u636e\u76ee\u5f55\uff1a{runtime_paths.USER_DATA_DIR}")
         st.caption(f"\u672c\u5730\u4fdd\u5b58\uff1a{'\u5f00\u542f' if ENABLE_LOCAL_SAVE else '\u5173\u95ed'}\uff1bJSON \u9644\u52a0\u6587\u4ef6\uff1a{'\u5f00\u542f' if ENABLE_JSON_SIDECAR else '\u5173\u95ed'}")
         if st.button("\u6e05\u7406\u672c\u5730\u62a5\u544a\u4e0e\u6d3b\u52a8\u65b9\u6848", key="clear_local_saved_reports"):
-            deleted = 0
-            for folder in [REPORT_DIR, ACTIVITY_PLAN_DIR]:
-                resolved_folder = folder.resolve()
-                if folder.exists() and runtime_paths.USER_DATA_DIR.resolve() in resolved_folder.parents:
-                    for item in folder.rglob("*"):
-                        if item.is_file():
-                            item.unlink()
-                            deleted += 1
+            deleted = clear_local_saved_reports()
             st.success(f"\u5df2\u6e05\u7406 {deleted} \u4e2a\u672c\u5730\u4fdd\u5b58\u6587\u4ef6\u3002")
 
 
+def render_admin_report_metrics() -> None:
+    """渲染本地报告数量统计。"""
     counts = get_report_type_counts()
     if counts:
         cols = st.columns(min(len(counts), 4))
@@ -3462,6 +3619,25 @@ def render_admin_mode() -> None:
     else:
         st.info("reports/ 文件夹中暂未发现 Markdown 报告。")
 
+
+def rebuild_admin_index() -> None:
+    """从管理后台重新构建知识库索引。"""
+    with st.spinner("正在重新构建知识库索引..."):
+        log_buffer = io.StringIO()
+        try:
+            import build_index
+
+            with contextlib.redirect_stdout(log_buffer), contextlib.redirect_stderr(log_buffer):
+                build_index.main()
+            st.code(log_buffer.getvalue() or "索引构建完成。", language="text")
+            st.success("知识库索引已更新")
+        except Exception as exc:
+            st.code(log_buffer.getvalue(), language="text")
+            st.warning(f"知识库索引更新失败：{exc}")
+
+
+def render_admin_knowledge_management() -> None:
+    """渲染知识库管理区。"""
     chroma_dir = runtime_paths.data_path("chroma_db")
     chroma_size_mb = get_folder_size(chroma_dir) / (1024 * 1024)
     st.write(f"知识库状态：{'已存在' if chroma_dir.exists() else '未构建'}，索引文件大小约 {chroma_size_mb:.2f} MB")
@@ -3473,21 +3649,12 @@ def render_admin_mode() -> None:
 
     st.markdown("### 知识库管理")
     if st.button("重新构建索引", use_container_width=True, key="admin_rebuild_index"):
-        with st.spinner("正在重新构建知识库索引..."):
-            log_buffer = io.StringIO()
-            try:
-                import build_index
-
-                with contextlib.redirect_stdout(log_buffer), contextlib.redirect_stderr(log_buffer):
-                    build_index.main()
-                st.code(log_buffer.getvalue() or "索引构建完成。", language="text")
-                st.success("知识库索引已更新")
-            except Exception as exc:
-                st.code(log_buffer.getvalue(), language="text")
-                st.warning(f"知识库索引更新失败：{exc}")
-
+        rebuild_admin_index()
     st.write(f"索引文件夹：{'存在' if chroma_dir.exists() else '不存在'}；文件数量：{get_folder_file_count(chroma_dir)}")
 
+
+def render_admin_config_checker() -> None:
+    """渲染 YAML 配置检查器。"""
     st.markdown("### 配置检查器")
     yaml_files = sorted(set(get_config_yaml_files()) | set(get_expected_config_files()))
     if not yaml_files:
@@ -3500,22 +3667,51 @@ def render_admin_mode() -> None:
             else:
                 st.caption("该 YAML 配置文件不存在，当前运行时会使用代码内置默认配置。")
 
+
+def render_admin_cache_management() -> None:
+    """渲染缓存清理区。"""
     st.markdown("### 缓存管理")
-    if st.button("清除对话缓存", use_container_width=True, key="admin_clear_chat_cache"):
-        cache_keys = [
-            "personal_messages",
-            "personal_display_messages",
-            "last_report",
-            "last_report_path",
-            "last_workflow",
-            "self_diagnosis_result",
-            "collaboration_results",
-            "collaboration_coordinator_result",
-            "collaboration_report_path",
-        ]
-        for key in cache_keys:
-            st.session_state.pop(key, None)
-        st.success("对话缓存已清除")
+    if not st.button("清除对话缓存", use_container_width=True, key="admin_clear_chat_cache"):
+        return
+    cache_keys = [
+        "personal_messages",
+        "personal_display_messages",
+        "last_report",
+        "last_report_path",
+        "last_workflow",
+        "self_diagnosis_result",
+        "collaboration_results",
+        "collaboration_coordinator_result",
+        "collaboration_report_path",
+    ]
+    for key in cache_keys:
+        st.session_state.pop(key, None)
+    st.success("对话缓存已清除")
+
+
+def render_admin_dashboard() -> None:
+    """渲染管理后台主体仪表盘。"""
+    st.markdown("### 系统概览仪表盘")
+    render_admin_system_info()
+    render_admin_data_retention()
+    render_admin_report_metrics()
+    render_admin_knowledge_management()
+    render_admin_config_checker()
+    render_admin_cache_management()
+
+
+def render_admin_mode() -> None:
+    """Lightweight admin area for system overview, knowledge base and config checks."""
+    st.markdown('<div class="section-title">管理后台</div>', unsafe_allow_html=True)
+    if not is_admin_ready():
+        render_admin_initialization()
+        return
+
+    if not st.session_state.get("admin_unlocked", False):
+        render_admin_login()
+        return
+
+    render_admin_dashboard()
 
 
 def save_activity_markdown(plan_text: str) -> Path:

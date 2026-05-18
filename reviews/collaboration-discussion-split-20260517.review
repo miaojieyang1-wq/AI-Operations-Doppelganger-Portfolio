@@ -1,0 +1,40 @@
+# 多职能协作函数拆分审查
+
+## 变更范围
+
+- 拆分 `app.py` 中的 `render_collaboration_discussion`。
+- 新增小函数分别负责默认输入读取、协作输入区、角色解析、提交校验、协作生成、单角色结果展示、报告保存和结果渲染。
+- 更新 `CHANGELOG.md`，记录本轮结构优化。
+
+## 行为保持
+
+- 保持原有输入框、角色多选、协作目标选择、自定义目标输入和按钮 key 不变。
+- 保持竞品雷达基准优先作为默认输入的行为不变。
+- 保持生成任务标识 `version:collaboration`、运行状态记录、结果缓存字段和数据源声明逻辑不变。
+- 保持保存协作报告到 `reports/collaboration/` 的行为不变。
+
+## 风险评估
+
+- 风险等级：中。
+- 主要风险点：协作讨论涉及角色选择、协调者汇总、部分角色失败兜底和报告保存，状态字段较多。
+- 已处理：生成函数仍统一写入原有 `session_state` 字段；结果渲染仍读取同一组字段；保存函数只封装原有持久化逻辑。
+
+## 回归建议
+
+1. 打开版本决策页并进入“协作讨论”。
+2. 不填写公告直接点击“开始协作分析”，确认仍提示先输入版本公告或基准。
+3. 清空所有角色后提交，确认仍提示至少选择一个职能角色。
+4. 在演示模式或有效 API Key 下提交协作分析，确认角色结果、协调者建议和复制框正常显示。
+5. 点击“保存协作报告”，确认仍保存到 `reports/collaboration/` 并显示成功提示。
+
+## 已执行检查
+
+- `.python-core/python.exe -m py_compile app.py`：通过
+- `.python-core/python.exe check_env.py`：通过
+- `.python-core/python.exe smoke_test.py`：通过
+- `.python-core/python.exe health_check.py`：通过
+- `.python-core/python.exe -c "import app; ..."` 协作讨论入口导入检查：通过
+
+## 未执行项
+
+- 当前权限审核两次超时，未能在沙箱外启动 Streamlit 服务，因此本轮未完成浏览器页面点击回归。

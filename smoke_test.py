@@ -4,6 +4,7 @@
 - 正常输入：Agent 可返回本地演示回答
 - 边界输入：空输入不会导致核心模块崩溃
 - 特殊输入：完整公式组可从独立文件直接读取
+- 多轮追问：战术引擎语境下输入“公式”可直接读取完整公式组
 
 本脚本不依赖真实外部 API。
 """
@@ -65,6 +66,23 @@ def test_math_full_direct_read() -> None:
     assert "\\boxed{S_t" in response
 
 
+def test_math_followup_direct_read() -> None:
+    """多轮追问：战术引擎语境下只输入“公式”也应走完整公式组直读。"""
+    import agent_graph
+
+    response = agent_graph.run(
+        "公式",
+        messages=[
+            {"role": "user", "content": "你的战术引擎的数学思路是怎么样的？"},
+            {"role": "assistant", "content": "它是基于状态空间、目标泛函和搜索剪枝的系统。"},
+            {"role": "user", "content": "公式"},
+        ],
+    )
+    assert response.startswith("$$$LATEX_START$$$")
+    assert response.endswith("$$$LATEX_END$$$")
+    assert "\\boxed{S_t" in response
+
+
 def main() -> int:
     """执行冒烟测试。"""
     setup_test_env()
@@ -72,6 +90,7 @@ def main() -> int:
         ("demo_chat", test_demo_chat),
         ("empty_input_fallback", test_empty_input_fallback),
         ("math_full_direct_read", test_math_full_direct_read),
+        ("math_followup_direct_read", test_math_followup_direct_read),
     ]
     results = [run_case(name, func) for name, func in cases]
     return 0 if all(results) else 1

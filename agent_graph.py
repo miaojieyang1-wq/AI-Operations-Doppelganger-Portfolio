@@ -30,6 +30,23 @@ LAST_INTENT: ContextVar[str] = ContextVar("LAST_INTENT", default="")
 LAST_PROMPT_MODULES: ContextVar[list[str]] = ContextVar("LAST_PROMPT_MODULES", default=[])
 
 MATH_FULL_TRIGGERS = ["展示完整公式组", "你的数学骨架是什么", "整套数学体系", "完整公式组", "完整数学体系"]
+MATH_FOLLOWUP_TRIGGERS = ["公式", "公式组", "数学公式", "展开公式", "给我公式"]
+MATH_CONTEXT_KEYWORDS = [
+    "战术引擎",
+    "星铁",
+    "星穹铁道",
+    "排轴",
+    "战斗模拟",
+    "数学思路",
+    "数学体系",
+    "数学骨架",
+    "状态空间",
+    "状态转移函数",
+    "目标泛函",
+    "模块写入权",
+    "剪枝条件",
+    "受击分支",
+]
 MATH_SEGMENT_KEYWORDS = {
     "mathematics-01-state-space.md": ["战斗状态空间", "状态空间", "七元组", "各分量", "值域定义"],
     "mathematics-02-transfer-function.md": ["状态转移函数", "转移函数", "操作与事件空间", "复合"],
@@ -76,9 +93,35 @@ def get_latest_user_input(state: State) -> str:
     return ""
 
 
-def is_math_full_display_request(user_input: str) -> bool:
+def has_math_context(text: str) -> bool:
+    """判断文本是否处在战术引擎数学语境中。"""
+    return any(keyword in text for keyword in MATH_CONTEXT_KEYWORDS)
+
+
+def get_recent_user_context(messages: list[dict[str, str]] | None, latest_input: str) -> str:
+    """提取最近用户上下文，用于识别“公式”等短追问。"""
+    if not messages:
+        return latest_input
+    user_messages = [
+        message.get("content", "")
+        for message in messages
+        if message.get("role") == "user"
+    ]
+    if not user_messages or user_messages[-1] != latest_input:
+        user_messages.append(latest_input)
+    return "\n".join(user_messages[-4:])
+
+
+def is_math_full_display_request(user_input: str, messages: list[dict[str, str]] | None = None) -> bool:
     """判断是否需要完整展示公式组；该路径直接读文件，不走 RAG 和模型生成。"""
-    return any(trigger in user_input for trigger in MATH_FULL_TRIGGERS)
+    if any(trigger in user_input for trigger in MATH_FULL_TRIGGERS):
+        return True
+    if "公式" in user_input and has_math_context(user_input):
+        return True
+    compact_input = user_input.strip()
+    if compact_input in MATH_FOLLOWUP_TRIGGERS and has_math_context(get_recent_user_context(messages, user_input)):
+        return True
+    return False
 
 
 def read_math_full_for_display() -> str:
@@ -330,7 +373,7 @@ graph = AGENT_GRAPH
 
 def run(user_input: str, messages: list[dict[str, str]] | None = None) -> str:
     """执行完整 Agent 流程，并返回最终回复。"""
-    if is_math_full_display_request(user_input):
+    if is_math_full_display_request(user_input, messages):
         LAST_INTENT.set("works:math-full")
         LAST_PROMPT_MODULES.set(["direct:works/mathematics-full.md"])
         return read_math_full_for_display()
