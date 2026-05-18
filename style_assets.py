@@ -7,10 +7,167 @@ MAIN_CSS = '\n        <style>\n        :root {\n            --ink: #111827;\n   
 
 ENTRY_CSS = '\n        <style>\n        .block-container {\n            padding-top: 1.2rem;\n        }\n        div[data-testid="stDialog"] h2,\n        div[role="dialog"] h2 {\n            display: none;\n        }\n        div[data-testid="stDialog"] div[role="dialog"],\n        div[data-testid="stDialog"] section[role="dialog"] {\n            width: min(1180px, 94vw);\n            max-width: 94vw;\n        }\n        div[data-testid="stDialog"] div.stButton > button[kind="primary"] {\n            background: #f0fdfa;\n            color: #134e4a;\n            border: 1px solid #99d6cf;\n            box-shadow: none;\n        }\n        div[data-testid="stDialog"] div.stButton > button[kind="primary"]:hover {\n            background: #ccfbf1;\n            color: #115e59;\n            border-color: #5eead4;\n        }\n        .entry-loading-note {\n            color: #667085;\n            font-size: 0.84rem;\n            text-align: center;\n            line-height: 1.5;\n            margin: 0.35rem 0 0.65rem;\n        }\n        .entry-dialog-image {\n            display: block;\n            width: 100%;\n            max-height: min(64vh, 620px);\n            object-fit: contain;\n        }\n        .entry-welcome-copy {\n            color: #344054;\n            font-size: 0.92rem;\n            line-height: 1.58;\n            margin: 0.05rem 0 0.8rem;\n        }\n        .entry-welcome-copy p {\n            margin: 0 0 0.36rem;\n        }\n        .entry-welcome-copy p:first-child {\n            color: #101828;\n            font-size: 1.18rem;\n            font-weight: 800;\n        }\n        .entry-ps {\n            color: #667085;\n            font-size: 0.82rem;\n            line-height: 1.55;\n            margin-top: 0.6rem !important;\n        }\n        </style>\n        '
 
+MOTION_CSS = """
+        <style>
+        @keyframes aiFadeUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes aiSoftPulse {
+            0%, 100% { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); }
+            50% { box-shadow: 0 10px 28px rgba(15, 118, 110, 0.12); }
+        }
+        @keyframes aiRing {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        @keyframes aiProgress {
+            0% { transform: translateX(-70%); }
+            100% { transform: translateX(160%); }
+        }
+        @keyframes aiDash {
+            from { background-position: 0 0; }
+            to { background-position: 34px 0; }
+        }
+        .hero-band,
+        .decision-hero,
+        .task-panel,
+        .report-box,
+        .roadmap-overview,
+        .roadmap-card,
+        .stage-card,
+        .portfolio-guide,
+        .document-preview-note {
+            animation: aiFadeUp 420ms ease both;
+        }
+        .mode-tile,
+        .roadmap-card,
+        .stage-card,
+        div.stButton > button {
+            transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+        }
+        .mode-tile:hover,
+        .roadmap-card:hover,
+        .stage-card:hover {
+            transform: translateY(-2px);
+            border-color: #99d6cf;
+            box-shadow: 0 9px 24px rgba(16, 24, 40, 0.08);
+        }
+        .mode-tile-active {
+            position: relative;
+            overflow: hidden;
+            animation: aiSoftPulse 2.8s ease-in-out infinite;
+        }
+        .mode-tile-active::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: linear-gradient(180deg, #0f766e, #38bdf8);
+        }
+        div.stButton > button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(16, 24, 40, 0.08);
+        }
+        div.stButton > button[kind="primary"] {
+            background: #0f766e;
+            color: #ffffff;
+            border-color: #0f766e;
+            position: relative;
+            overflow: hidden;
+        }
+        div.stButton > button[kind="primary"]:hover:not(:disabled) {
+            background: #115e59;
+            color: #ffffff;
+            border-color: #115e59;
+        }
+        div.stButton > button[kind="primary"]:disabled {
+            background: #d0d5dd;
+            color: #667085;
+            border-color: #d0d5dd;
+        }
+        div.stButton > button[kind="primary"]::after {
+            content: "";
+            position: absolute;
+            inset: auto 12px 6px 12px;
+            height: 2px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.82), transparent);
+            transform: translateX(-120%);
+            transition: transform 320ms ease;
+        }
+        div.stButton > button[kind="primary"]:hover::after {
+            transform: translateX(120%);
+        }
+        .roadmap-line-active {
+            background: repeating-linear-gradient(90deg, #5eead4 0 14px, #38bdf8 14px 22px);
+            background-size: 34px 1px;
+            animation: aiDash 1.2s linear infinite;
+        }
+        .processing-panel {
+            border: 1px solid #a7f3d0;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #f0fdfa 0%, #ffffff 56%, #eff6ff 100%);
+            padding: 0.85rem 0.95rem;
+            margin: 0.75rem 0 1rem;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.8rem;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+            animation: aiFadeUp 240ms ease both;
+        }
+        .processing-panel::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #0f766e, #38bdf8, transparent);
+            animation: aiProgress 1.35s ease-in-out infinite;
+        }
+        .processing-ring {
+            width: 2.15rem;
+            height: 2.15rem;
+            border-radius: 999px;
+            border: 3px solid #ccfbf1;
+            border-top-color: #0f766e;
+            border-right-color: #38bdf8;
+            animation: aiRing 900ms linear infinite;
+        }
+        .processing-title {
+            color: #134e4a;
+            font-weight: 760;
+            font-size: 0.96rem;
+            margin-bottom: 0.12rem;
+        }
+        .processing-copy {
+            color: #475467;
+            font-size: 0.88rem;
+            line-height: 1.55;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 1ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 1ms !important;
+            }
+        }
+        </style>
+        """
+
 
 def apply_main_styles() -> None:
     st.markdown(MAIN_CSS, unsafe_allow_html=True)
+    st.markdown(MOTION_CSS, unsafe_allow_html=True)
 
 
 def apply_entry_styles() -> None:
     st.markdown(ENTRY_CSS, unsafe_allow_html=True)
+    st.markdown(MOTION_CSS, unsafe_allow_html=True)

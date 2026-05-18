@@ -628,6 +628,22 @@ def render_first_analysis_notice(source_type: str) -> None:
         st.rerun()
 
 
+def render_processing_panel(title: str, copy: str) -> None:
+    """渲染生成中的轻量动效状态条。"""
+    st.markdown(
+        f"""
+        <div class="processing-panel">
+            <div class="processing-ring"></div>
+            <div>
+                <div class="processing-title">{html.escape(title)}</div>
+                <div class="processing-copy">{html.escape(copy)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_data_source_warning(source_type: str) -> None:
     """改动位置：在分析报告顶部展示统一数据源真实性预警。"""
     st.warning(DATA_SOURCE_WARNING_TEXT)
@@ -1918,6 +1934,7 @@ def run_personal_chat(user_content: str, extra_context: str) -> None:
             "fallback:personal-local",
         )
 
+    render_processing_panel("正在生成回答", "正在识别问题意图、调取作品集素材，并整理成更自然的面试表达。")
     with st.spinner("请您稍等片刻，回答马上就到🚅"):
         result, detected_intent, _generation_error = run_personal_agent_generation(user_content, extra_context)
 
@@ -2417,6 +2434,7 @@ def run_insight_generation(
 
     system_prompt = read_prompt_file(prompt_id, fallback_prompt)
     start_time = time.perf_counter()
+    render_processing_panel("正在整理用户洞察", "正在把输入拆成研究目标、关键变量和可执行输出。")
     with st.spinner("请您稍等片刻，洞察内容马上就到🚅"):
         try:
             result = run_agent_task(intent_label, user_content, system_prompt)
@@ -2935,6 +2953,7 @@ def run_collaboration_generation(announcement: str, selected_role_names: list[st
         return False
 
     start_time = time.perf_counter()
+    render_processing_panel("多职能协作中", "正在让不同运营角色分别判断，再由协调者汇总为行动建议。")
     progress_slot = st.empty()
     progress_bar = st.progress(0)
     progress_slot.info(f"各职能角色正在从各自视角分析中...共 {len(selected_roles)} 个角色")
@@ -3084,6 +3103,7 @@ def run_version_analysis_generation(announcement: str) -> None:
         st.warning("请先粘贴版本公告。")
         return
     start_time = time.perf_counter()
+    render_processing_panel("正在拆解版本公告", "正在提炼卖点、玩家分层、传播风险和后续追踪指标。")
     with st.spinner("请您稍等片刻，报告马上就到🚅"):
         try:
             result = run_agent_task("version:analysis", announcement, get_version_analysis_prompt())
@@ -3187,6 +3207,7 @@ def run_competitor_analysis_generation(competitor_text: str, competitor_category
         f"竞品版本公告：\n{competitor_text}"
     ).strip()
     start_time = time.perf_counter()
+    render_processing_panel("竞品雷达扫描中", "正在对齐自家基准、竞品动作和可借鉴策略点。")
     with st.spinner("请您稍等片刻，竞品雷达正在扫描🚅"):
         try:
             result = run_agent_task("version:competitor", user_content, get_competitor_prompt())
@@ -3310,6 +3331,7 @@ def run_activity_generation(activity_goal: str, activity_background: str) -> boo
     user_content = build_activity_user_content(activity_goal, activity_background)
 
     start_time = time.perf_counter()
+    render_processing_panel("正在搭建活动方案", "正在组合活动主题、参与路径、奖励梯度、风险预案和复盘指标。")
     with st.spinner("请您稍等片刻，活动方案马上就到🚅"):
         try:
             result = run_agent_task("activity:workshop", user_content, system_prompt)
@@ -3937,6 +3959,7 @@ def main() -> None:
             return
 
         button_slot.button("正在分析中...", disabled=True, use_container_width=True)
+        render_processing_panel("正在编排工作流", "正在识别任务类型、补充本地知识，并生成更贴近运营场景的结果。")
         with st.spinner("请您稍等片刻，报告马上就到🚅"):
             start_time = time.perf_counter()
             try:
