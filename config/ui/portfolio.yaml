@@ -1,7 +1,7 @@
 items:
   - title: "作品集能力总览与介绍"
-    subtitle: "五个核心作品与经历的联系主线"
-    desc: "整合 SEO Prompt 工程、AI运营分身 Agent、帕姆帮帮黑箱测试方案、星铁战术引擎，以及武汉邦多利同好会和二次元同人乐队圈线下活动经历的提纲介绍。用于说明每个作品的设计来源、执行方法、产出结果和分别验证的能力。"
+    subtitle: "六条核心作品与经历的联系主线"
+    desc: "整合 SEO Prompt 工程、AI运营分身 Agent、知识治理控制台、帕姆帮帮黑箱测试方案、星铁战术引擎，以及武汉邦多利同好会和二次元同人乐队圈线下活动经历的提纲介绍。用于说明每个作品的设计来源、执行方法、产出结果和分别验证的能力。"
     path: "portfolio-capability-overview.md"
 
   - title: "AI运营分身 Agent 设计与迭代记录"
@@ -13,6 +13,16 @@ items:
       - "LangGraph流程编排"
       - "前端交互设计"
     path: "agent-design-iteration.md"
+
+  - title: "知识治理控制台"
+    subtitle: "面向 Agent 知识库维护的独立治理后台"
+    desc: "独立 Streamlit 控制台，用于登记知识单元、追踪 Badcase、管理审核状态，并将生效知识导出为 Agent 可读取的 YAML。它通过默认关闭的 sync/ 同步路径与 AI 运营分身松耦合衔接，证明我对 RAG 知识库维护、纠错回流和 Agent 长期治理的理解。"
+    tags:
+      - "知识治理"
+      - "Badcase回流"
+      - "YAML同步"
+      - "低耦合架构"
+    path: "knowledge-governance-console.md"
 
   - title: "SEO提示词工程迭代记录"
     subtitle: "从V0到V4的提示词工程优化路径"

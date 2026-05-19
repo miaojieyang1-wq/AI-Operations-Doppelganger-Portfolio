@@ -29,6 +29,24 @@ MOTION_CSS = """
             from { background-position: 0 0; }
             to { background-position: 34px 0; }
         }
+        @keyframes aiStepGlow {
+            0%, 100% {
+                background: #ffffff;
+                border-color: #d7e5e1;
+                color: #667085;
+            }
+            42% {
+                background: #ccfbf1;
+                border-color: #5eead4;
+                color: #134e4a;
+            }
+        }
+        @keyframes aiTinyScan {
+            0% { transform: translateX(-110%); opacity: 0; }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { transform: translateX(110%); opacity: 0; }
+        }
         .hero-band,
         .decision-hero,
         .task-panel,
@@ -149,6 +167,40 @@ MOTION_CSS = """
             color: #475467;
             font-size: 0.88rem;
             line-height: 1.55;
+        }
+        .processing-steps {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.38rem;
+            margin-top: 0.52rem;
+        }
+        .processing-step {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #d7e5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #667085;
+            font-size: 0.76rem;
+            font-weight: 700;
+            line-height: 1.2;
+            padding: 0.26rem 0.55rem;
+            animation: aiStepGlow 2.4s ease-in-out infinite;
+        }
+        .processing-step::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.82), transparent);
+            animation: aiTinyScan 2.4s ease-in-out infinite;
+        }
+        .processing-step-2,
+        .processing-step-2::after {
+            animation-delay: 0.35s;
+        }
+        .processing-step-3,
+        .processing-step-3::after {
+            animation-delay: 0.7s;
         }
         @media (prefers-reduced-motion: reduce) {
             *,

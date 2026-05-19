@@ -630,6 +630,11 @@ def render_first_analysis_notice(source_type: str) -> None:
 
 def render_processing_panel(title: str, copy: str) -> None:
     """渲染生成中的轻量动效状态条。"""
+    step_labels = ["识别意图", "检索素材", "组织输出"]
+    steps_html = "".join(
+        f'<span class="processing-step processing-step-{index + 1}">{html.escape(label)}</span>'
+        for index, label in enumerate(step_labels)
+    )
     st.markdown(
         f"""
         <div class="processing-panel">
@@ -637,6 +642,7 @@ def render_processing_panel(title: str, copy: str) -> None:
             <div>
                 <div class="processing-title">{html.escape(title)}</div>
                 <div class="processing-copy">{html.escape(copy)}</div>
+                <div class="processing-steps" aria-hidden="true">{steps_html}</div>
             </div>
         </div>
         """,
