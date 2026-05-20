@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import base64
 import contextlib
 import io
@@ -1525,12 +1526,16 @@ def read_work_document(relative_path: str) -> tuple[str, Path | None]:
 def build_work_directory_preview(directory_path: Path) -> str:
     """改动位置：作品集条目支持项目文件夹，优先展示架构说明和目录结构。"""
     lines = [f"# {directory_path.name}", "", "这是一个作品项目文件夹。您可以点击“打开项目文件夹”查看完整代码、数据和说明文件。", ""]
-    architecture_file = directory_path / "ARCHITECTURE.md"
-    if architecture_file.exists() and architecture_file.is_file():
+    overview_file = directory_path / "ARCHITECTURE.md"
+    overview_title = "架构说明预览"
+    if not overview_file.exists():
+        overview_file = directory_path / "README.md"
+        overview_title = "README 预览"
+    if overview_file.exists() and overview_file.is_file():
         try:
-            lines.extend(["## 架构说明预览", "", architecture_file.read_text(encoding="utf-8", errors="replace").strip(), ""])
+            lines.extend([f"## {overview_title}", "", overview_file.read_text(encoding="utf-8", errors="replace").strip(), ""])
         except Exception:
-            lines.extend(["## 架构说明预览", "", "暂时无法读取 ARCHITECTURE.md，但可以直接打开项目文件夹查看。", ""])
+            lines.extend([f"## {overview_title}", "", f"暂时无法读取 {overview_file.name}，但可以直接打开项目文件夹查看。", ""])
 
     visible_files = []
     try:
@@ -1715,6 +1720,7 @@ def load_portfolio_config_items() -> list[dict[str, object]]:
                 "desc": str(raw_item.get("desc", raw_item.get("description", ""))).strip(),
                 "tags": [str(tag).strip() for tag in tags if str(tag).strip()],
                 "path": path,
+                "repo_url": str(raw_item.get("repo_url", "")).strip(),
             }
         )
     return items
@@ -1963,13 +1969,13 @@ def render_portfolio_tab() -> None:
         <div class="task-panel">
             <div class="task-kicker">我的作品集</div>
             <div class="task-title">这里展示的不只是文字材料，也包括这个 AI 运营分身项目本身</div>
-            <div class="task-desc">您可以先看每个作品验证的能力，再点击“预览文档”查看网页预览；需要原始大纲和排版时，可以继续打开原文件。</div>
+            <div class="task-desc">您可以先看每个作品验证的能力，再点击“预览文档”查看网页预览；知识治理控制台和星铁战术引擎已提供 GitHub 仓库入口，可直接打开查看完整项目。</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="portfolio-guide">如果您对某份作品有疑问、想按岗位能力拆解，或者希望我进一步解释某个设计思路，也可以切回“了解我”和 AI 运营分身直接对话。</div>',
+        '<div class="portfolio-guide">带有“打开 GitHub 仓库”的作品卡片可以直接跳转到独立项目；如果您对某份作品有疑问、想按岗位能力拆解，或者希望我进一步解释某个设计思路，也可以切回“了解我”和 AI 运营分身直接对话。</div>',
         unsafe_allow_html=True,
     )
 
@@ -1990,6 +1996,9 @@ def render_portfolio_tab() -> None:
                     tags = item.get("tags", [])
                     if isinstance(tags, list) and tags:
                         st.caption("能力标签：" + "、".join(str(tag) for tag in tags))
+                    repo_url = str(item.get("repo_url", "")).strip()
+                    if repo_url:
+                        st.link_button("打开 GitHub 仓库", repo_url, use_container_width=True)
                     st.caption(f"对应文档：works/{item_path}")
                     if source_path is None or not source_text.strip():
                         st.button("预览文档", key=f"open_work_{item_path}", use_container_width=True, disabled=True)
@@ -2941,6 +2950,57 @@ def get_selected_collaboration_roles(selected_role_names: list[str]) -> list[dic
     return [role for role in selected_roles if role]
 
 
+def load_role_agent_config(role: dict) -> dict:
+    """读取协作角色对应的 YAML 配置。"""
+    agent_id = f"{role['key']}_ops"
+    return config_loader.load_yaml_config(PROJECT_DIR / "config" / "agents" / f"{agent_id}.yaml") or {}
+
+
+def filter_context(user_input: str, role_filter: dict | None) -> str:
+    """按角色感知过滤器移除不相关信息；未配置时保持原文。"""
+    if not isinstance(role_filter, dict):
+        return user_input
+
+    ignore_items = [str(item).strip() for item in role_filter.get("ignore", []) if str(item).strip()]
+    focus_items = [str(item).strip() for item in role_filter.get("focus_on", []) if str(item).strip()]
+    if not ignore_items:
+        return user_input
+
+    kept_lines: list[str] = []
+    for line in user_input.splitlines():
+        has_ignore = any(item in line for item in ignore_items)
+        has_focus = any(item in line for item in focus_items)
+        if has_ignore and not has_focus:
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines).strip()
+
+
+def build_role_fallback_context(agent_config: dict) -> str:
+    """过滤后为空时，使用确定性缺失声明兜底，避免角色沉默。"""
+    rules = agent_config.get("deterministic_rules") or []
+    if isinstance(rules, list):
+        for rule in rules:
+            rule_text = str(rule).strip()
+            if rule_text and any(keyword in rule_text for keyword in ("缺失", "不包含", "未获取")):
+                return rule_text
+    return "用户输入中未包含与你专业领域直接相关的信息。请基于现有信息，从你的职能视角给出通用型参考建议，并标注‘本建议基于有限信息，仅供参考’。"
+
+
+def attach_collaboration_role_contexts(roles: list[dict], announcement: str) -> list[dict]:
+    """为每个协作角色附加感知过滤后的上下文。"""
+    prepared_roles: list[dict] = []
+    for role in roles:
+        role_config = load_role_agent_config(role)
+        filtered_context = filter_context(announcement, role_config.get("perception_filter"))
+        if not filtered_context.strip():
+            filtered_context = build_role_fallback_context(role_config)
+        prepared_role = dict(role)
+        prepared_role["filtered_announcement"] = filtered_context
+        prepared_roles.append(prepared_role)
+    return prepared_roles
+
+
 def validate_collaboration_request(announcement: str, selected_roles: list[dict]) -> bool:
     """校验协作讨论请求是否可提交。"""
     if not announcement.strip():
@@ -2958,6 +3018,7 @@ def run_collaboration_generation(announcement: str, selected_role_names: list[st
     if not validate_collaboration_request(announcement, selected_roles):
         return False
 
+    selected_roles = attach_collaboration_role_contexts(selected_roles, announcement)
     start_time = time.perf_counter()
     render_processing_panel("多职能协作中", "正在让不同运营角色分别判断，再由协调者汇总为行动建议。")
     progress_slot = st.empty()

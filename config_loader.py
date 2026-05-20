@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from copy import deepcopy
@@ -116,7 +117,7 @@ AGENT_PROMPT_TEMPLATE = """你是游戏运营团队中的{role_name}。你的核
 你的分析框架：
 {analysis_framework}
 
-你的输出风格：{style}。经常使用{terminology}等术语。输出控制在{output_limit}字以内。
+你的输出风格：{style}。经常使用{terminology}等术语。输出控制在{output_limit}字以内。{deterministic_rules_section}
 
 ### 回答边界规则
 {boundary_rule_template}"""
@@ -168,6 +169,16 @@ def translate_agent_config_to_prompt(agent_config: dict[str, Any]) -> str:
     else:
         terminology = str(terminology_items)
 
+    deterministic_rule_items = agent_config.get("deterministic_rules") or []
+    deterministic_rules_section = ""
+    if isinstance(deterministic_rule_items, list) and deterministic_rule_items:
+        deterministic_rules = "\n".join(f"- {item}" for item in deterministic_rule_items)
+        deterministic_rules_section = (
+            "\n\n### 前置确定性规则\n"
+            "在开始分析前，先执行以下确定性规则。这些规则不需要调用LLM推理，"
+            f"直接采用规则中的输出内容：\n{deterministic_rules}"
+        )
+
     return AGENT_PROMPT_TEMPLATE.format(
         role_name=agent_config.get("role_name", ""),
         core_responsibility=agent_config.get("core_responsibility", ""),
@@ -175,6 +186,7 @@ def translate_agent_config_to_prompt(agent_config: dict[str, Any]) -> str:
         style=agent_config.get("style", ""),
         terminology=terminology,
         output_limit=agent_config.get("output_limit", ""),
+        deterministic_rules_section=deterministic_rules_section,
         boundary_rule_template=agent_config.get("boundary_rule_template", ""),
     ).strip()
 

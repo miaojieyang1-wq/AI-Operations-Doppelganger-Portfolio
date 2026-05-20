@@ -1,0 +1,21 @@
+[
+  {
+    "knowledge_id": "KID-20260518-001",
+    "title": "示例：日本市场付费意愿更多与CV相关",
+    "content": "根据历史版本数据和社区反馈分析，日本市场玩家付费意愿与角色CV（声优）的关联度显著高于其他市场。当新角色由高人气CV配音时，日服流水通常出现明显上涨。",
+    "knowledge_type": "经验总结",
+    "creator": "示例运营人员",
+    "owner": "示例运营人员",
+    "approver": "示例管理者",
+    "effective_date": "2026-05-18",
+    "expiry_date": "",
+    "source": "内部运营专家经验",
+    "trust_rating": "高置信度经多方验证",
+    "version": "1.0",
+    "scope": "市场运营Agent、竞品雷达模块、日服分析",
+    "status": "生效中",
+    "created_at": "2026-05-18T00:00:00+08:00",
+    "updated_at": "2026-05-18T00:00:00+08:00",
+    "modification_logs": []
+  }
+]

@@ -16,13 +16,14 @@ items:
 
   - title: "知识治理控制台"
     subtitle: "面向 Agent 知识库维护的独立治理后台"
-    desc: "独立 Streamlit 控制台，用于登记知识单元、追踪 Badcase、管理审核状态，并将生效知识导出为 Agent 可读取的 YAML。它通过默认关闭的 sync/ 同步路径与 AI 运营分身松耦合衔接，证明我对 RAG 知识库维护、纠错回流和 Agent 长期治理的理解。"
+    desc: "独立 Streamlit 控制台，用于登记知识单元、追踪 Badcase、管理审核状态，并使用本地 JSON 文件持久化知识库质量问题。它已整理为独立 GitHub 项目，可点击下方仓库入口查看。"
     tags:
       - "知识治理"
       - "Badcase回流"
-      - "YAML同步"
+      - "JSON持久化"
       - "低耦合架构"
-    path: "knowledge-governance-console.md"
+    path: "knowledge_governance_console"
+    repo_url: "https://github.com/miaojieyang1-wq/Knowledge-Governance-Console"
 
   - title: "SEO提示词工程迭代记录"
     subtitle: "从V0到V4的提示词工程优化路径"
@@ -56,7 +57,7 @@ items:
 
   - title: "星铁战术引擎"
     subtitle: "基于精确数学公式的回合制战斗推演系统"
-    desc: "封装社区速度轴和伤害计算API作为接口，自建排轴策略引擎。在有限时间窗口内枚举所有合法操作序列，对受击回能等不确定性事件做分类讨论而非模糊期望值估算，输出含基准轴和受击分支变招方案的战术建议书。五层分层架构，八个硬模块各管各的状态变量，通过事件总线通信，所有外部依赖预留抽象接口。"
+    desc: "封装社区速度轴和伤害计算API作为接口，自建排轴策略引擎。在有限时间窗口内枚举合法操作序列，对受击回能等不确定性事件做分类讨论。它已整理为独立 GitHub 项目，可点击下方仓库入口查看。"
     tags:
       - "产品洞察能力"
       - "数学建模与系统工程设计能力"
@@ -65,6 +66,7 @@ items:
       - "团队协作意识"
       - "边界诚实认知"
     path: "star_rail_tactical_engine_20260512"
+    repo_url: "https://github.com/miaojieyang1-wq/Honkai-Star-Rail-Tactical-Turn-Optimization-Development-Engine"
 
   - title: "帕姆帮帮黑箱测试方案"
     subtitle: "面向产品功能验证的黑箱测试设计文档"

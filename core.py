@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 核心业务编排层。
 
@@ -160,7 +161,8 @@ class Orchestrator:
         """独立调用单个职能角色；失败不影响其他角色。"""
         agent_id = f"{role['key']}_ops"
         system_prompt = get_agent_prompt(agent_id)
-        user_content = self.build_role_user_content(announcement, goal)
+        role_announcement = str(role.get("filtered_announcement") or announcement)
+        user_content = self.build_role_user_content(role_announcement, goal)
         try:
             content = self.call_with_system_prompt(
                 system_prompt,

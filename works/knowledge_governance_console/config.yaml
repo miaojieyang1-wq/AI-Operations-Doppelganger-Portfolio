@@ -1,0 +1,3 @@
+data_dir: data
+knowledge_base_file: knowledge_base.json
+badcase_log_file: badcase_log.json
