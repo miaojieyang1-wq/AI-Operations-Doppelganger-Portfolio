@@ -2256,8 +2256,8 @@ def render_decision_dashboard_header() -> None:
     st.markdown(
         """
         <div class="decision-hero">
-            <div class="decision-title">运营路线图</div>
-            <div class="decision-subtitle">从研发到长线运营的完整决策流程</div>
+            <div class="decision-title">自然语言运营工作流</div>
+            <div class="decision-subtitle">直接描述目标，我会把已有运营模块组装成可执行流程，并在执行中保留修改记录。</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2354,16 +2354,337 @@ def render_roadmap_connector() -> None:
     )
 
 
+def render_workflow_motion_styles() -> None:
+    """注入自然语言工作流专用动画样式。"""
+    st.markdown(
+        """
+        <style>
+        @keyframes workflowPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+        }
+        @keyframes workflowSlideIn {
+            from { opacity: 0; transform: translateX(-18px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes workflowFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes workflowSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        @keyframes workflowLinePulse {
+            0%, 100% { box-shadow: 0 0 0 rgba(37, 99, 235, 0); }
+            50% { box-shadow: 0 0 12px rgba(37, 99, 235, 0.35); }
+        }
+        @keyframes workflowFlash {
+            0% { border-color: #bfdbfe; box-shadow: 0 0 0 rgba(37, 99, 235, 0); }
+            50% { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
+            100% { border-color: #bfdbfe; box-shadow: 0 0 0 rgba(37, 99, 235, 0); }
+        }
+        .workflow-status-bar {
+            border-top: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e5e7eb;
+            color: #667085;
+            font-size: 0.88rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.9rem;
+            padding: 0.55rem 0;
+            margin: 0.75rem 0 1rem;
+        }
+        .workflow-thinking-card {
+            border: 1px solid #bfdbfe;
+            border-radius: 8px;
+            background: #eff6ff;
+            color: #1e3a8a;
+            padding: 1rem 1.1rem;
+            margin: 0.85rem 0;
+            animation: workflowPulse 1.5s ease-in-out infinite;
+        }
+        .workflow-card {
+            position: relative;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #ffffff;
+            padding: 0.95rem 1rem 0.9rem 1.1rem;
+            margin: 0.7rem 0;
+            overflow: hidden;
+            animation: workflowSlideIn 0.3s ease-out both, workflowFadeIn 0.2s ease-out both;
+            animation-delay: var(--workflow-delay, 0s);
+        }
+        .workflow-card::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: #d0d5dd;
+        }
+        .workflow-card-running {
+            border-color: #bfdbfe;
+            box-shadow: 0 8px 20px rgba(37, 99, 235, 0.09);
+        }
+        .workflow-card-running::before {
+            background: #2563eb;
+            animation: workflowLinePulse 1.5s ease-in-out infinite;
+        }
+        .workflow-card-completed {
+            background: #f8fffd;
+            color: #344054;
+        }
+        .workflow-card-completed::before {
+            background: #16a34a;
+        }
+        .workflow-card-completed::after {
+            content: "✓";
+            position: absolute;
+            right: 0.85rem;
+            top: 0.72rem;
+            color: #15803d;
+            font-weight: 800;
+        }
+        .workflow-card-discarded {
+            opacity: 0.55;
+            background: #fff7f7;
+        }
+        .workflow-card-discarded::before {
+            background: #dc2626;
+        }
+        .workflow-card-discarded::after {
+            content: "";
+            position: absolute;
+            left: -10%;
+            top: 52%;
+            width: 120%;
+            height: 2px;
+            background: rgba(220, 38, 38, 0.72);
+            transform: rotate(-7deg);
+        }
+        .workflow-card-next {
+            animation: workflowSlideIn 0.3s ease-out both, workflowFlash 0.3s ease-out 0.3s 1;
+        }
+        .workflow-card-overlay::after {
+            content: "正在根据你的指令重新规划...";
+            position: absolute;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.78);
+            color: #1e3a8a;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: workflowPulse 1.5s ease-in-out infinite;
+            z-index: 3;
+        }
+        .workflow-card-kicker {
+            color: #0f766e;
+            font-size: 0.78rem;
+            font-weight: 760;
+            margin-bottom: 0.2rem;
+        }
+        .workflow-card-title {
+            color: #111827;
+            font-size: 1rem;
+            font-weight: 760;
+            margin-bottom: 0.3rem;
+            padding-right: 1.5rem;
+        }
+        .workflow-card-action {
+            color: #475467;
+            font-size: 0.92rem;
+            line-height: 1.6;
+            margin-bottom: 0.55rem;
+        }
+        .workflow-source-tag {
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            padding: 0.22rem 0.58rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            border: 1px solid transparent;
+        }
+        .workflow-source-user {
+            background: #ecfeff;
+            color: #155e75;
+            border-color: #a5f3fc;
+        }
+        .workflow-source-step {
+            background: #f0fdfa;
+            color: #134e4a;
+            border-color: #99d6cf;
+        }
+        .workflow-source-executed {
+            background: #f5f3ff;
+            color: #5b21b6;
+            border-color: #ddd6fe;
+        }
+        .workflow-card-progress {
+            color: #2563eb;
+            font-size: 0.84rem;
+            margin-top: 0.6rem;
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .workflow-spinner {
+            width: 0.82rem;
+            height: 0.82rem;
+            border-radius: 999px;
+            border: 2px solid #bfdbfe;
+            border-top-color: #2563eb;
+            animation: workflowSpin 0.8s linear infinite;
+            display: inline-block;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def get_workflow_source_label(input_from: str) -> tuple[str, str]:
+    """返回输入来源标签和颜色类型。"""
+    if input_from == "user_input":
+        return "用户输入", "workflow-source-user"
+    if input_from.startswith("executed_step_"):
+        return input_from.replace("executed_step_", "复用步骤") + "结果", "workflow-source-executed"
+    if input_from.startswith("step_"):
+        return input_from.replace("step_", "步骤") + "输出", "workflow-source-step"
+    return input_from or "未指定来源", "workflow-source-step"
+
+
+def render_workflow_step_card(
+    step: dict,
+    status: str = "pending",
+    delay_index: int = 0,
+    overlay: bool = False,
+) -> None:
+    """渲染带动画和状态的工作流步骤卡片。"""
+    step_number = int(step.get("step", delay_index + 1) or delay_index + 1)
+    module = html.escape(str(step.get("module", "")))
+    action = html.escape(str(step.get("action", "")))
+    input_from = str(step.get("input_from", "user_input"))
+    source_label, source_class = get_workflow_source_label(input_from)
+    status_class = {
+        "running": "workflow-card-running",
+        "completed": "workflow-card-completed",
+        "discarded": "workflow-card-discarded",
+        "next": "workflow-card-next",
+    }.get(status, "")
+    overlay_class = "workflow-card-overlay" if overlay else ""
+    running_tip = ""
+    if status == "running":
+        running_tip = f'<div class="workflow-card-progress"><span class="workflow-spinner"></span>正在调用{module}模块...</div>'
+    st.markdown(
+        f"""
+        <div class="workflow-card {status_class} {overlay_class}" style="--workflow-delay:{delay_index * 0.24:.2f}s">
+            <div class="workflow-card-kicker">Step {step_number}</div>
+            <div class="workflow-card-title">{module}</div>
+            <div class="workflow-card-action">{action}</div>
+            <span class="workflow-source-tag {source_class}">{html.escape(source_label)}</span>
+            {running_tip}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_workflow_dag_preview(dag: list[dict]) -> None:
     """展示自然语言编排生成的调用链。"""
     if not dag:
         return
     st.markdown("#### 工作流预览")
-    for step in dag:
+    for index, step in enumerate(dag):
+        render_workflow_step_card(step, delay_index=index)
+
+
+def get_current_workflow_dag() -> list[dict]:
+    """读取当前静态或交互式工作流。"""
+    interactive_state = st.session_state.get("nl_workflow_interactive_state", {})
+    final_dag = interactive_state.get("final_dag", [])
+    if final_dag:
+        return final_dag
+    return st.session_state.get("nl_workflow_dag", [])
+
+
+def render_current_instruction_flow() -> None:
+    """把原路线图区域改为当前指令指定流程展示区。"""
+    dag = get_current_workflow_dag()
+    interactive_state = st.session_state.get("nl_workflow_interactive_state", {})
+    revision_history = interactive_state.get("revision_history", [])
+    executed_results = interactive_state.get("executed_results", {})
+    current_index = int(interactive_state.get("current_step_index", 0) or 0)
+    running_step = st.session_state.get("nl_workflow_running_step")
+    replanning = bool(st.session_state.get("nl_workflow_replanning"))
+
+    st.markdown('<div class="section-title">当前指令指定流程</div>', unsafe_allow_html=True)
+    if not dag:
+        st.info("还没有生成工作流。请在上方输入运营目标并点击“生成工作流”。")
         st.markdown(
-            f"- **Step {step.get('step')}｜{step.get('module')}**：{step.get('action')}  \n"
-            f"  数据依赖：`{step.get('input_from', 'user_input')}`"
+            """
+            - 版本公告分析 → 竞品对比 → 多职能协作
+            - 玩家反馈清洗 → 问卷工坊 → 访谈助手
+            - 活动目标拆解 → 活动策划 → 自我诊断复盘
+            """
         )
+        return
+
+    progress_value = min(1.0, current_index / max(len(dag), 1)) if interactive_state else 0
+    if interactive_state:
+        latest_revision = revision_history[-1].get("time", "暂无修改") if revision_history else "暂无修改"
+        current_status = "正在等待你的指令"
+        if running_step:
+            current_status = f"正在执行第{running_step}步"
+        elif replanning:
+            current_status = "正在重新规划"
+        st.markdown(
+            f"""
+            <div class="workflow-status-bar">
+                <span>当前工作流进度：步骤 {current_index} / 总共 {len(dag)} 步</span>
+                <span>当前状态：{html.escape(current_status)}</span>
+                <span>最近一次修改：{html.escape(latest_revision)}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    for index, step in enumerate(sorted(dag, key=lambda item: int(item.get("step", 0))), start=1):
+        step_number = int(step.get("step", index))
+        result = executed_results.get(step_number) or executed_results.get(str(step_number), {})
+        status = "pending"
+        if result:
+            status = "completed" if result.get("success") else "discarded"
+        elif running_step == step_number:
+            status = "running"
+        elif interactive_state and index == current_index + 1 and interactive_state.get("status") == "waiting":
+            status = "next"
+        render_workflow_step_card(
+            step,
+            status=status,
+            delay_index=index - 1,
+            overlay=replanning and not result,
+        )
+
+    for item in revision_history[-1:]:
+        discarded_steps = set(int(step) for step in item.get("discarded_steps", []))
+        for old_step in item.get("dag_before", []):
+            if int(old_step.get("step", 0) or 0) in discarded_steps:
+                render_workflow_step_card(old_step, status="discarded", delay_index=len(dag))
+
+    st.markdown('<div class="section-title">修改记录</div>', unsafe_allow_html=True)
+    if not revision_history:
+        st.caption("暂无修改记录。交互式执行时，你可以在每一步后输入修改指令。")
+    else:
+        for item in revision_history:
+            discarded = "、".join(str(step) for step in item.get("discarded_steps", [])) or "无"
+            st.markdown(
+                f"- **{item.get('time', '')}**：{item.get('instruction', '')}  \n"
+                f"  废弃步骤：{discarded}；原因：{item.get('discard_reason', '无')}"
+            )
 
 
 def get_interactive_workflow_state() -> dict:
@@ -2440,9 +2761,17 @@ def render_interactive_workflow_state(state: dict) -> None:
     if not final_dag:
         return
     current_index = int(state.get("current_step_index", 0))
-    progress_value = min(1.0, current_index / max(len(final_dag), 1))
-    st.progress(progress_value)
-    st.caption(f"当前状态：{state.get('status', 'idle')} · 已完成 {current_index}/{len(final_dag)} 步")
+    latest_revision = state.get("revision_history", [])[-1].get("time", "暂无修改") if state.get("revision_history") else "暂无修改"
+    st.markdown(
+        f"""
+        <div class="workflow-status-bar">
+            <span>当前工作流进度：步骤 {current_index} / 总共 {len(final_dag)} 步</span>
+            <span>当前状态：{html.escape(str(state.get('status', 'idle')))}</span>
+            <span>最近一次修改：{html.escape(latest_revision)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     render_workflow_dag_preview(final_dag)
 
     executed_results = state.get("executed_results", {})
@@ -2453,106 +2782,154 @@ def render_interactive_workflow_state(state: dict) -> None:
 
 def render_natural_language_orchestration() -> None:
     """自然语言驱动的运营工作流入口。"""
-    with st.expander("自然语言编排", expanded=False):
-        st.caption("用目标描述替代手动切换模块；静态模式一次跑完，交互式模式允许逐步干预和重规划。")
-        instruction = st.text_area(
-            "运营分析需求",
-            value=st.session_state.get("workflow_instruction", ""),
-            placeholder="用自然语言描述你的运营分析需求。例如：分析这个版本公告，先提炼核心卖点，然后用它生成宣发文案，最后和竞品A的最新动态做个对比。",
-            height=150,
-            key="workflow_instruction",
-        )
-        workflow_mode = st.radio(
-            "选择编排模式",
-            ["静态编排", "交互式执行"],
-            horizontal=True,
-            key="nl_workflow_mode",
-        )
+    render_workflow_motion_styles()
+    st.markdown(
+        """
+        <div class="task-panel">
+            <div class="task-kicker">自然语言编排</div>
+            <div class="task-title">把运营目标直接变成可执行调用链</div>
+            <div class="task-desc">静态模式一次跑完整个流程；交互式模式每一步都可以继续、改方向或重规划。</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    instruction = st.text_area(
+        "运营分析需求",
+        value=st.session_state.get("workflow_instruction", ""),
+        placeholder="用自然语言描述你的运营分析需求。例如：分析这个版本公告，先提炼核心卖点，然后用它生成宣发文案，最后和竞品A的最新动态做个对比。",
+        height=170,
+        key="workflow_instruction",
+    )
+    workflow_mode = st.radio(
+        "选择编排模式",
+        ["静态编排", "交互式执行"],
+        horizontal=True,
+        key="nl_workflow_mode",
+    )
 
-        if st.button("生成工作流", type="primary", use_container_width=True, key="generate_nl_workflow"):
+    if st.button("生成工作流", type="primary", use_container_width=True, key="generate_nl_workflow"):
+        if not instruction.strip():
+            st.warning("请先输入运营分析需求。")
+        else:
+            thinking_slot = st.empty()
+            thinking_slot.markdown(
+                '<div class="workflow-thinking-card">正在分析你的需求...</div>',
+                unsafe_allow_html=True,
+            )
+            try:
+                st.session_state.nl_workflow_dag = parse_intent_to_dag(instruction)
+                st.session_state.nl_workflow_result = ""
+                st.session_state.nl_workflow_interactive_state = {
+                    "original_instruction": "",
+                    "initial_dag": [],
+                    "final_dag": [],
+                    "executed_results": {},
+                    "revision_history": [],
+                    "current_step_index": 0,
+                    "status": "idle",
+                }
+                thinking_slot.empty()
+                st.success("工作流已生成。")
+            except Exception as exc:
+                thinking_slot.empty()
+                st.warning(f"工作流生成失败：{exc}")
+
+    dag = st.session_state.get("nl_workflow_dag", [])
+    render_workflow_dag_preview(dag)
+
+    if workflow_mode == "静态编排" and dag and st.button("执行工作流", use_container_width=True, key="execute_nl_workflow"):
+        progress = st.progress(0)
+        progress.progress(0.15)
+        running_preview = st.empty()
+        try:
+            first_step = dag[0] if dag else {}
+            st.session_state.nl_workflow_running_step = int(first_step.get("step", 1) or 1)
+            with running_preview.container():
+                for index, step in enumerate(dag):
+                    status = "running" if index == 0 else "pending"
+                    render_workflow_step_card(step, status=status, delay_index=index)
+            results = execute_dag(dag, {"user_input": instruction}, ORCHESTRATOR)
+            progress.progress(0.85)
+            st.session_state.nl_workflow_result = format_dag_result(dag, results)
+            st.session_state.nl_workflow_running_step = None
+            running_preview.empty()
+            progress.progress(1.0)
+            st.success("工作流执行完成。")
+        except Exception as exc:
+            st.session_state.nl_workflow_running_step = None
+            running_preview.empty()
+            progress.empty()
+            st.warning(f"工作流执行失败：{exc}")
+
+    result = st.session_state.get("nl_workflow_result", "")
+    if result:
+        st.markdown("#### 执行结果")
+        st.markdown(format_report_markdown(result))
+        st.text_area("复制工作流报告", value=result, height=220, key="nl_workflow_copy")
+
+    if workflow_mode == "交互式执行":
+        if dag and st.button("交互式执行", use_container_width=True, key="start_interactive_workflow"):
             if not instruction.strip():
                 st.warning("请先输入运营分析需求。")
             else:
-                progress = st.progress(0)
-                progress.progress(0.2)
-                try:
-                    st.session_state.nl_workflow_dag = parse_intent_to_dag(instruction)
-                    st.session_state.nl_workflow_result = ""
-                    progress.progress(1.0)
-                    st.success("工作流已生成。")
-                except Exception as exc:
-                    progress.empty()
-                    st.warning(f"工作流生成失败：{exc}")
+                with st.spinner("正在启动交互式工作流..."):
+                    st.session_state.nl_workflow_interactive_state = execute_dag_interactively(instruction, ORCHESTRATOR)
+                st.rerun()
 
-        dag = st.session_state.get("nl_workflow_dag", [])
-        render_workflow_dag_preview(dag)
+        state = get_interactive_workflow_state()
+        render_interactive_workflow_state(state)
+        if state.get("status") in {"waiting", "completed"} and state.get("final_dag"):
+            command = st.text_input(
+                "输入“继续”或写下修改指令",
+                placeholder="继续 / 下一步 / 修改第2步，让它先做反馈清洗再生成问卷",
+                key="nl_workflow_interactive_command",
+            )
+            col_next, col_modify = st.columns(2)
+            with col_next:
+                if st.button("继续下一步", use_container_width=True, key="continue_interactive_workflow"):
+                    if state.get("status") == "completed":
+                        st.info("工作流已经执行完成。")
+                    else:
+                        next_index = int(state.get("current_step_index", 0))
+                        final_dag = state.get("final_dag", [])
+                        if next_index < len(final_dag):
+                            st.session_state.nl_workflow_running_step = int(final_dag[next_index].get("step", next_index + 1) or next_index + 1)
+                        st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
+                        st.session_state.nl_workflow_running_step = None
+                        st.rerun()
+            with col_modify:
+                if st.button("提交修改", use_container_width=True, key="revise_interactive_workflow"):
+                    if not command.strip():
+                        st.warning("请先输入修改指令。")
+                    elif command.strip() in {"继续", "下一步"}:
+                        next_index = int(state.get("current_step_index", 0))
+                        final_dag = state.get("final_dag", [])
+                        if next_index < len(final_dag):
+                            st.session_state.nl_workflow_running_step = int(final_dag[next_index].get("step", next_index + 1) or next_index + 1)
+                        st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
+                        st.session_state.nl_workflow_running_step = None
+                        st.rerun()
+                    else:
+                        st.session_state.nl_workflow_replanning = True
+                        replan_preview = st.empty()
+                        with replan_preview.container():
+                            render_current_instruction_flow()
+                        with st.spinner("正在根据修改指令重规划剩余工作流..."):
+                            st.session_state.nl_workflow_interactive_state = revise_interactive_workflow_state(state, command.strip())
+                            st.session_state.nl_workflow_replanning = False
+                        replan_preview.empty()
+                        st.rerun()
 
-        if workflow_mode == "静态编排" and dag and st.button("执行工作流", use_container_width=True, key="execute_nl_workflow"):
-            progress = st.progress(0)
-            progress.progress(0.15)
-            try:
-                results = execute_dag(dag, {"user_input": instruction}, ORCHESTRATOR)
-                progress.progress(0.85)
-                st.session_state.nl_workflow_result = format_dag_result(dag, results)
-                progress.progress(1.0)
-                st.success("工作流执行完成。")
-            except Exception as exc:
-                progress.empty()
-                st.warning(f"工作流执行失败：{exc}")
-
-        result = st.session_state.get("nl_workflow_result", "")
-        if result:
-            st.markdown("#### 执行结果")
-            st.markdown(format_report_markdown(result))
-            st.text_area("复制工作流报告", value=result, height=220, key="nl_workflow_copy")
-
-        if workflow_mode == "交互式执行":
-            if dag and st.button("交互式执行", use_container_width=True, key="start_interactive_workflow"):
-                if not instruction.strip():
-                    st.warning("请先输入运营分析需求。")
-                else:
-                    with st.spinner("正在启动交互式工作流..."):
-                        st.session_state.nl_workflow_interactive_state = execute_dag_interactively(instruction, ORCHESTRATOR)
-                    st.rerun()
-
-            state = get_interactive_workflow_state()
-            render_interactive_workflow_state(state)
-            if state.get("status") in {"waiting", "completed"} and state.get("final_dag"):
-                command = st.text_input(
-                    "输入“继续”或写下修改指令",
-                    placeholder="继续 / 下一步 / 修改第2步，让它先做反馈清洗再生成问卷",
-                    key="nl_workflow_interactive_command",
-                )
-                col_next, col_modify = st.columns(2)
-                with col_next:
-                    if st.button("继续下一步", use_container_width=True, key="continue_interactive_workflow"):
-                        if state.get("status") == "completed":
-                            st.info("工作流已经执行完成。")
-                        else:
-                            st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
-                            st.rerun()
-                with col_modify:
-                    if st.button("提交修改", use_container_width=True, key="revise_interactive_workflow"):
-                        if not command.strip():
-                            st.warning("请先输入修改指令。")
-                        elif command.strip() in {"继续", "下一步"}:
-                            st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
-                            st.rerun()
-                        else:
-                            with st.spinner("正在根据修改指令重规划剩余工作流..."):
-                                st.session_state.nl_workflow_interactive_state = revise_interactive_workflow_state(state, command.strip())
-                            st.rerun()
-
-            if state.get("status") == "completed" and state.get("final_dag"):
-                interactive_report = format_interactive_result(
-                    state.get("original_instruction", ""),
-                    state.get("final_dag", []),
-                    state.get("executed_results", {}),
-                    state.get("revision_history", []),
-                )
-                st.markdown("#### 交互式完整报告")
-                st.markdown(format_report_markdown(interactive_report))
-                st.text_area("复制交互式报告", value=interactive_report, height=220, key="nl_workflow_interactive_copy")
+        if state.get("status") == "completed" and state.get("final_dag"):
+            interactive_report = format_interactive_result(
+                state.get("original_instruction", ""),
+                state.get("final_dag", []),
+                state.get("executed_results", {}),
+                state.get("revision_history", []),
+            )
+            st.markdown("#### 交互式完整报告")
+            st.markdown(format_report_markdown(interactive_report))
+            st.text_area("复制交互式报告", value=interactive_report, height=220, key="nl_workflow_interactive_copy")
 
 
 def render_decision_dashboard() -> None:
@@ -2561,15 +2938,17 @@ def render_decision_dashboard() -> None:
     active_stage = st.session_state.get("active_roadmap_stage", None)
     render_decision_dashboard_header()
     render_natural_language_orchestration()
-    render_roadmap_overview(stages, active_stage)
-    for stage_index, stage in enumerate(stages):
-        is_active = active_stage == stage_index
-        render_roadmap_stage_card(stage, stage_index, is_active)
-        if is_active:
-            render_active_roadmap_stage(stage, stage_index, active_stage)
+    render_current_instruction_flow()
+    with st.expander("传统生命周期入口", expanded=False):
+        render_roadmap_overview(stages, active_stage)
+        for stage_index, stage in enumerate(stages):
+            is_active = active_stage == stage_index
+            render_roadmap_stage_card(stage, stage_index, is_active)
+            if is_active:
+                render_active_roadmap_stage(stage, stage_index, active_stage)
 
-        if stage_index < len(stages) - 1:
-            render_roadmap_connector()
+            if stage_index < len(stages) - 1:
+                render_roadmap_connector()
     st.caption("所有Agent分析结果均基于AI推理与用户输入生成，建议在关键决策前进行交叉验证。")
 
 
