@@ -33,6 +33,14 @@ import config_loader
 import runtime_paths
 import security_utils
 from core import Orchestrator
+from workflow_orchestrator import (
+    parse_intent_to_dag,
+    execute_dag,
+    format_dag_result,
+    revise_dag,
+    execute_dag_interactively,
+    format_interactive_result,
+)
 
 
 runtime_paths.load_runtime_env()
@@ -2346,11 +2354,213 @@ def render_roadmap_connector() -> None:
     )
 
 
+def render_workflow_dag_preview(dag: list[dict]) -> None:
+    """展示自然语言编排生成的调用链。"""
+    if not dag:
+        return
+    st.markdown("#### 工作流预览")
+    for step in dag:
+        st.markdown(
+            f"- **Step {step.get('step')}｜{step.get('module')}**：{step.get('action')}  \n"
+            f"  数据依赖：`{step.get('input_from', 'user_input')}`"
+        )
+
+
+def get_interactive_workflow_state() -> dict:
+    """读取交互式工作流状态。"""
+    return st.session_state.setdefault(
+        "nl_workflow_interactive_state",
+        {
+            "original_instruction": "",
+            "initial_dag": [],
+            "final_dag": [],
+            "executed_results": {},
+            "revision_history": [],
+            "current_step_index": 0,
+            "status": "idle",
+        },
+    )
+
+
+def execute_next_interactive_workflow_step(state: dict) -> dict:
+    """执行交互式工作流的下一步。"""
+    final_dag = state.get("final_dag", [])
+    current_index = int(state.get("current_step_index", 0))
+    if current_index >= len(final_dag):
+        state["status"] = "completed"
+        return state
+
+    step = final_dag[current_index]
+    results = execute_dag(
+        [step],
+        {
+            "user_input": state.get("original_instruction", ""),
+            "_executed_results": state.get("executed_results", {}),
+        },
+        ORCHESTRATOR,
+    )
+    state["executed_results"].update(results)
+    state["current_step_index"] = current_index + 1
+    state["status"] = "completed" if state["current_step_index"] >= len(final_dag) else "waiting"
+    return state
+
+
+def revise_interactive_workflow_state(state: dict, revision_instruction: str) -> dict:
+    """根据用户修改指令重规划交互式工作流。"""
+    old_dag = state.get("final_dag", [])
+    executed_results = state.get("executed_results", {})
+    new_dag = revise_dag(old_dag, revision_instruction, executed_results)
+    executed_steps = {int(step_number) for step_number in executed_results.keys()}
+    referenced_steps = {
+        int(match.group(1))
+        for step in new_dag
+        for match in [re.fullmatch(r"executed_step_(\d+)", str(step.get("input_from", "")))]
+        if match
+    }
+    discarded_steps = sorted(executed_steps - referenced_steps)
+    state["revision_history"].append(
+        {
+            "time": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "instruction": revision_instruction,
+            "discarded_steps": discarded_steps,
+            "discard_reason": "修改后的工作流未继续引用这些已执行步骤。",
+            "dag_before": old_dag,
+            "dag_after": new_dag,
+        }
+    )
+    state["final_dag"] = new_dag
+    state["current_step_index"] = 0
+    state["status"] = "completed" if state["current_step_index"] >= len(new_dag) else "waiting"
+    return state
+
+
+def render_interactive_workflow_state(state: dict) -> None:
+    """展示交互式工作流进度和中间结果。"""
+    final_dag = state.get("final_dag", [])
+    if not final_dag:
+        return
+    current_index = int(state.get("current_step_index", 0))
+    progress_value = min(1.0, current_index / max(len(final_dag), 1))
+    st.progress(progress_value)
+    st.caption(f"当前状态：{state.get('status', 'idle')} · 已完成 {current_index}/{len(final_dag)} 步")
+    render_workflow_dag_preview(final_dag)
+
+    executed_results = state.get("executed_results", {})
+    if executed_results:
+        st.markdown("#### 已执行步骤")
+        st.markdown(format_dag_result(final_dag, executed_results))
+
+
+def render_natural_language_orchestration() -> None:
+    """自然语言驱动的运营工作流入口。"""
+    with st.expander("自然语言编排", expanded=False):
+        st.caption("用目标描述替代手动切换模块；静态模式一次跑完，交互式模式允许逐步干预和重规划。")
+        instruction = st.text_area(
+            "运营分析需求",
+            value=st.session_state.get("workflow_instruction", ""),
+            placeholder="用自然语言描述你的运营分析需求。例如：分析这个版本公告，先提炼核心卖点，然后用它生成宣发文案，最后和竞品A的最新动态做个对比。",
+            height=150,
+            key="workflow_instruction",
+        )
+        workflow_mode = st.radio(
+            "选择编排模式",
+            ["静态编排", "交互式执行"],
+            horizontal=True,
+            key="nl_workflow_mode",
+        )
+
+        if st.button("生成工作流", type="primary", use_container_width=True, key="generate_nl_workflow"):
+            if not instruction.strip():
+                st.warning("请先输入运营分析需求。")
+            else:
+                progress = st.progress(0)
+                progress.progress(0.2)
+                try:
+                    st.session_state.nl_workflow_dag = parse_intent_to_dag(instruction)
+                    st.session_state.nl_workflow_result = ""
+                    progress.progress(1.0)
+                    st.success("工作流已生成。")
+                except Exception as exc:
+                    progress.empty()
+                    st.warning(f"工作流生成失败：{exc}")
+
+        dag = st.session_state.get("nl_workflow_dag", [])
+        render_workflow_dag_preview(dag)
+
+        if workflow_mode == "静态编排" and dag and st.button("执行工作流", use_container_width=True, key="execute_nl_workflow"):
+            progress = st.progress(0)
+            progress.progress(0.15)
+            try:
+                results = execute_dag(dag, {"user_input": instruction}, ORCHESTRATOR)
+                progress.progress(0.85)
+                st.session_state.nl_workflow_result = format_dag_result(dag, results)
+                progress.progress(1.0)
+                st.success("工作流执行完成。")
+            except Exception as exc:
+                progress.empty()
+                st.warning(f"工作流执行失败：{exc}")
+
+        result = st.session_state.get("nl_workflow_result", "")
+        if result:
+            st.markdown("#### 执行结果")
+            st.markdown(format_report_markdown(result))
+            st.text_area("复制工作流报告", value=result, height=220, key="nl_workflow_copy")
+
+        if workflow_mode == "交互式执行":
+            if dag and st.button("交互式执行", use_container_width=True, key="start_interactive_workflow"):
+                if not instruction.strip():
+                    st.warning("请先输入运营分析需求。")
+                else:
+                    with st.spinner("正在启动交互式工作流..."):
+                        st.session_state.nl_workflow_interactive_state = execute_dag_interactively(instruction, ORCHESTRATOR)
+                    st.rerun()
+
+            state = get_interactive_workflow_state()
+            render_interactive_workflow_state(state)
+            if state.get("status") in {"waiting", "completed"} and state.get("final_dag"):
+                command = st.text_input(
+                    "输入“继续”或写下修改指令",
+                    placeholder="继续 / 下一步 / 修改第2步，让它先做反馈清洗再生成问卷",
+                    key="nl_workflow_interactive_command",
+                )
+                col_next, col_modify = st.columns(2)
+                with col_next:
+                    if st.button("继续下一步", use_container_width=True, key="continue_interactive_workflow"):
+                        if state.get("status") == "completed":
+                            st.info("工作流已经执行完成。")
+                        else:
+                            st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
+                            st.rerun()
+                with col_modify:
+                    if st.button("提交修改", use_container_width=True, key="revise_interactive_workflow"):
+                        if not command.strip():
+                            st.warning("请先输入修改指令。")
+                        elif command.strip() in {"继续", "下一步"}:
+                            st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
+                            st.rerun()
+                        else:
+                            with st.spinner("正在根据修改指令重规划剩余工作流..."):
+                                st.session_state.nl_workflow_interactive_state = revise_interactive_workflow_state(state, command.strip())
+                            st.rerun()
+
+            if state.get("status") == "completed" and state.get("final_dag"):
+                interactive_report = format_interactive_result(
+                    state.get("original_instruction", ""),
+                    state.get("final_dag", []),
+                    state.get("executed_results", {}),
+                    state.get("revision_history", []),
+                )
+                st.markdown("#### 交互式完整报告")
+                st.markdown(format_report_markdown(interactive_report))
+                st.text_area("复制交互式报告", value=interactive_report, height=220, key="nl_workflow_interactive_copy")
+
+
 def render_decision_dashboard() -> None:
     """决策看板：首页按运营生命周期组织入口。"""
     stages = DECISION_DASHBOARD_STAGES
     active_stage = st.session_state.get("active_roadmap_stage", None)
     render_decision_dashboard_header()
+    render_natural_language_orchestration()
     render_roadmap_overview(stages, active_stage)
     for stage_index, stage in enumerate(stages):
         is_active = active_stage == stage_index
