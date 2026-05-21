@@ -101,25 +101,6 @@ powershell -ExecutionPolicy Bypass -File .\check_env.ps1
 
 如需使用实时 AI 生成能力，请配置 DeepSeek API Key。
 
-1. 在项目文件夹里找到 `.env.example`。
-2. 用鼠标选中 `.env.example` 文件。
-3. 按 `Ctrl + C` 复制，再按 `Ctrl + V` 粘贴一份副本。
-4. 将复制出的新文件改名为 `.env`。
-5. 用记事本打开 `.env`。
-6. 找到这一行：
-
-```text
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-```
-
-7. 将 `your_deepseek_api_key_here` 替换为真实 API Key，例如：
-
-```text
-DEEPSEEK_API_KEY=sk-xxxxxxxx
-```
-
-8. 保存并关闭文件。
-
 如暂时没有 API Key，也可以使用网页中的“演示模式”。演示模式会读取本地预设结果，不会实时调用 AI 服务。
 
 ### 5. 构建知识库索引
