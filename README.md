@@ -34,69 +34,154 @@
 - FastAPI 预留接口
 - matplotlib
 
-## 快速开始
+## 新手运行指引（Windows）
 
-### 1. 检查并修复本机环境
+下面的步骤按“第一次在新电脑上运行”设计。只需要照着选择文件、复制命令即可，不需要提前了解 Git 或 Python 项目结构。
 
-建议使用 Python 3.10 或以上版本。
+### 1. 下载并解压项目
 
-Windows 用户可先运行一键环境检查脚本。脚本会检查 Python、Visual C++ 运行时、关键 Python 依赖、项目文件、知识库索引和本地嵌入模型，并尽可能自动安装缺失依赖：
+1. 打开本仓库页面。
+2. 点击绿色按钮 `Code`。
+3. 选择 `Download ZIP`。
+4. 下载完成后，右键压缩包，选择 `全部解压缩`。
+5. 进入解压后的项目文件夹。
+
+请确认你打开的是包含以下文件名的那一层文件夹：
+
+- `app.py`
+- `check_env.ps1`
+- `requirements.txt`
+- `build_index.py`
+- `.env.example`
+- `works`
+
+如果只看到一个同名大文件夹，请继续双击进入下一层，直到看到上面这些文件。
+
+### 2. 安装 Python
+
+本项目需要 Python 3.10 或以上版本。
+
+1. 打开 [python.org/downloads](https://www.python.org/downloads/)。
+2. 下载最新版 Python。
+3. 安装时请务必勾选 `Add python.exe to PATH`。
+4. 安装完成后，关闭并重新打开命令窗口。
+
+如果不确定是否装好，可以在项目文件夹的地址栏输入 `powershell` 并回车，然后运行：
+
+```powershell
+python --version
+```
+
+看到 `Python 3.10`、`Python 3.11`、`Python 3.12` 或更高版本即可。
+
+### 3. 一键检查并修复环境
+
+在项目文件夹里，按住 `Shift` 并右键空白处，选择 `在终端中打开` 或 `在 PowerShell 中打开`。
+
+复制下面这行命令并回车：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\check_env.ps1
 ```
 
-如脚本提示 Visual C++ 运行时缺失，请按提示安装 [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)。该组件缺失时，`onnxruntime`、`chromadb` 或默认嵌入模型可能在新设备上加载失败。
+这个脚本会自动检查并尽量修复：
 
-### 2. 安装依赖
+- Python 版本
+- Visual C++ 运行时
+- Python 依赖包
+- `.env`、`works`、索引目录等关键文件
+- 本地嵌入模型是否可加载
 
-如果不使用一键检查脚本，也可以手动安装依赖：
+如果脚本提示 Visual C++ 运行时缺失，请下载并安装：
 
-```bash
-python -m pip install -r requirements.txt
+[vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+
+这个组件缺失时，`onnxruntime`、`chromadb` 或默认嵌入模型可能在新设备上加载失败。
+
+### 4. 配置 API Key
+
+如果你要使用实时 AI 生成，请配置 DeepSeek API Key。
+
+1. 在项目文件夹里找到 `.env.example`。
+2. 用鼠标选中 `.env.example` 这个文件。
+3. 按 `Ctrl + C` 复制，再按 `Ctrl + V` 粘贴一份。
+4. 把复制出来的新文件改名为 `.env`。
+5. 用记事本打开 `.env`。
+6. 找到这一行：
+
+```text
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
 ```
 
-### 3. 配置 API Key
+7. 把 `your_deepseek_api_key_here` 替换成你的真实 Key，例如：
 
-复制 `.env.example` 为 `.env`，并填写你的 DeepSeek API Key。
-
-```bash
-DEEPSEEK_API_KEY=sk-your-key
+```text
+DEEPSEEK_API_KEY=sk-xxxxxxxx
 ```
 
-如果没有 API Key，也可以进入演示模式。
+8. 保存并关闭文件。
 
-### 4. 构建知识库索引
+如果你暂时没有 API Key，也可以先使用网页里的“演示模式”。演示模式会读取本地预设结果，不会实时调用 AI 服务。
 
-```bash
+### 5. 构建知识库索引
+
+知识库索引用来检索 `works` 文件夹里的作品集文档。第一次换电脑运行时需要重新构建。
+
+在 PowerShell 中运行：
+
+```powershell
 python build_index.py
 ```
 
-脚本会读取 `works/` 文件夹下的作品集文档，并构建本地索引。
+构建完成后，可以运行下面的诊断命令确认索引是否可用：
 
-索引默认保存在当前设备的用户数据目录，不会随 GitHub 仓库一起迁移。换设备后请重新运行上面的命令，或在页面侧边栏/管理后台点击构建索引。
-
-本项目已修复跨设备迁移时的一个常见问题：新设备如果只有空的 `chroma_db/` 目录，不会再被误判为“已有旧索引”并卡在交互确认；无交互环境也会自动继续构建。需要排查时可运行：
-
-```bash
+```powershell
 python diagnose_index.py
 ```
 
-更详细的迁移说明见 `KNOWLEDGE_INDEX_MIGRATION.md`。
+看到 `Index looks available on this device.` 就说明当前设备的知识库索引已经可用。
 
-### 5. 启动应用
+索引默认保存在当前设备的用户数据目录，不会随 GitHub 仓库一起迁移。更详细的迁移说明见 `KNOWLEDGE_INDEX_MIGRATION.md`。
 
-```bash
+本项目已修复跨设备迁移时的一个常见问题：新设备如果只有空的 `chroma_db` 文件夹，不会再被误判为“已有旧索引”并卡在交互确认。
+
+### 6. 启动应用
+
+环境检查和索引构建完成后，在 PowerShell 中运行：
+
+```powershell
 streamlit run app.py
 ```
 
-也可以运行：
+正常情况下，浏览器会自动打开本地网页。如果没有自动打开，请复制终端里显示的 `http://localhost:xxxx` 地址到浏览器。
 
-```bash
+如果不想输入命令，也可以在项目文件夹里双击：
+
+```text
+start_app.bat
+```
+
+如果双击后提示缺少依赖，请先回到第 3 步运行 `check_env.ps1`。
+
+你也可以运行安装向导：
+
+```powershell
 python install.py
 ```
 
-使用安装向导完成环境检查、配置和启动。
+### 7. 下次再打开
+
+下次在同一台电脑上运行时，通常只需要：
+
+```powershell
+streamlit run app.py
+```
+
+只有在换电脑、重新下载项目、更新 `works` 文档，或页面提示知识库不可用时，才需要重新运行：
+
+```powershell
+python build_index.py
+```
 
 ## 目录说明
 
