@@ -73,11 +73,11 @@ python --version
 
 若显示 `Python 3.10`、`Python 3.11`、`Python 3.12` 或更高版本，则说明版本符合要求。
 
-### 3. 一键检查并修复环境
+### 3. 运行 `check_env.ps1` 一键检查并修复环境
 
 在项目文件夹中，按住 `Shift` 并右键空白处，选择 `在终端中打开` 或 `在 PowerShell 中打开`。
 
-复制以下命令并回车执行：
+请确认项目文件夹中存在 `check_env.ps1` 文件。复制以下命令并回车执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\check_env.ps1
