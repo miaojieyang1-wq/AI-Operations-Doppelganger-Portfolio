@@ -36,15 +36,27 @@
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 检查并修复本机环境
 
 建议使用 Python 3.10 或以上版本。
+
+Windows 用户可先运行一键环境检查脚本。脚本会检查 Python、Visual C++ 运行时、关键 Python 依赖、项目文件、知识库索引和本地嵌入模型，并尽可能自动安装缺失依赖：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\check_env.ps1
+```
+
+如脚本提示 Visual C++ 运行时缺失，请按提示安装 [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)。该组件缺失时，`onnxruntime`、`chromadb` 或默认嵌入模型可能在新设备上加载失败。
+
+### 2. 安装依赖
+
+如果不使用一键检查脚本，也可以手动安装依赖：
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-### 2. 配置 API Key
+### 3. 配置 API Key
 
 复制 `.env.example` 为 `.env`，并填写你的 DeepSeek API Key。
 
@@ -54,7 +66,7 @@ DEEPSEEK_API_KEY=sk-your-key
 
 如果没有 API Key，也可以进入演示模式。
 
-### 3. 构建知识库索引
+### 4. 构建知识库索引
 
 ```bash
 python build_index.py
@@ -62,7 +74,9 @@ python build_index.py
 
 脚本会读取 `works/` 文件夹下的作品集文档，并构建本地索引。
 
-索引默认保存在当前设备的用户数据目录，不会随 GitHub 仓库一起迁移。换设备后请重新运行上面的命令，或在页面侧边栏/管理后台点击构建索引。需要排查时可运行：
+索引默认保存在当前设备的用户数据目录，不会随 GitHub 仓库一起迁移。换设备后请重新运行上面的命令，或在页面侧边栏/管理后台点击构建索引。
+
+本项目已修复跨设备迁移时的一个常见问题：新设备如果只有空的 `chroma_db/` 目录，不会再被误判为“已有旧索引”并卡在交互确认；无交互环境也会自动继续构建。需要排查时可运行：
 
 ```bash
 python diagnose_index.py
@@ -70,7 +84,7 @@ python diagnose_index.py
 
 更详细的迁移说明见 `KNOWLEDGE_INDEX_MIGRATION.md`。
 
-### 4. 启动应用
+### 5. 启动应用
 
 ```bash
 streamlit run app.py
@@ -91,6 +105,9 @@ python install.py
 - `core.py`：核心业务编排层。
 - `rag_engine.py`：本地知识库检索。
 - `build_index.py`：知识库索引构建脚本。
+- `diagnose_index.py`：知识库索引迁移诊断脚本。
+- `check_env.ps1`：Windows 一键环境检查与自动修复脚本。
+- `KNOWLEDGE_INDEX_MIGRATION.md`：跨设备迁移知识库索引的说明。
 - `config/`：配置中心，包含提示词、角色配置和 UI 配置。
 - `works/`：作品集文档与项目材料。
 - `static/`：图片等静态资源。
@@ -104,10 +121,22 @@ python install.py
 
 ## 自检
 
-首次运行前，建议先检查环境：
+Windows 新设备首次运行前，建议先执行完整环境检查与自动修复：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\check_env.ps1
+```
+
+也可以运行 Python 版基础环境检查：
 
 ```bash
 python check_env.py
+```
+
+如果只想确认知识库索引是否已经在当前设备上可用：
+
+```bash
+python diagnose_index.py
 ```
 
 每次修改后，可以先跑冒烟测试：
