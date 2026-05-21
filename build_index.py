@@ -153,14 +153,19 @@ def backup_existing_index() -> None:
 
 def should_rebuild_existing_index() -> bool:
     """已有索引时询问覆盖还是跳过；非交互环境默认备份后覆盖。"""
-    if not CHROMA_DIR.exists():
+    if not LOCAL_VECTORSTORE_FILE.exists():
         return True
     print(f"检测到已有索引文件夹：{CHROMA_DIR}")
     if not sys.stdin.isatty():
         print("当前为非交互环境，将自动备份旧索引并覆盖。")
         backup_existing_index()
         return True
-    answer = input("是否覆盖旧索引？输入 y 覆盖，其他任意键跳过：").strip().lower()
+    try:
+        answer = input("是否覆盖旧索引？输入 y 覆盖，其他任意键跳过：").strip().lower()
+    except EOFError:
+        print("当前环境无法读取交互输入，将自动备份旧索引并覆盖。")
+        backup_existing_index()
+        return True
     if answer in {"y", "yes", "是"}:
         backup_existing_index()
         return True

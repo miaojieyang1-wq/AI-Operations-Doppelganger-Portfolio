@@ -1068,6 +1068,12 @@ def render_runtime_graph_lines(status: dict) -> None:
         )
 
 
+def refresh_knowledge_index_state() -> None:
+    """清理知识库状态缓存，让刚构建好的索引立刻在界面生效。"""
+    rag_engine.load_vectorstore_by_signature.cache_clear()
+    rag_engine.get_vectorstore_status_by_signature.cache_clear()
+
+
 def build_knowledge_index_from_sidebar() -> None:
     """从侧边栏触发知识库索引构建。"""
     with st.spinner("正在构建知识库索引..."):
@@ -1077,8 +1083,10 @@ def build_knowledge_index_from_sidebar() -> None:
 
             with contextlib.redirect_stdout(log_buffer), contextlib.redirect_stderr(log_buffer):
                 build_index.main()
+            refresh_knowledge_index_state()
             st.code(log_buffer.getvalue() or "索引构建完成。", language="text")
             st.success("知识库索引已更新。")
+            st.rerun()
         except Exception as exc:
             st.code(log_buffer.getvalue(), language="text")
             st.warning(f"知识库索引构建失败：{exc}")
@@ -1086,12 +1094,21 @@ def build_knowledge_index_from_sidebar() -> None:
 
 def render_runtime_knowledge_lines(knowledge_status: dict) -> None:
     """渲染本地知识库状态和构建入口。"""
+    status_text = (
+        f'已加载 {knowledge_status["chunk_count"]} 个文档块'
+        if knowledge_status["exists"]
+        else "未构建"
+    )
     st.markdown(
-        f'<div class="status-line">知识库状态：已加载 {knowledge_status["chunk_count"]} 个文档块</div>',
+        f'<div class="status-line">知识库状态：{status_text}</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
         '<div class="status-line">知识库类型：本地轻量向量，不依赖外部 Embedding API</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="status-line">索引位置：{html.escape(str(rag_engine.LOCAL_VECTORSTORE_FILE))}</div>',
         unsafe_allow_html=True,
     )
     if not knowledge_status["exists"]:
@@ -4307,8 +4324,10 @@ def rebuild_admin_index() -> None:
 
             with contextlib.redirect_stdout(log_buffer), contextlib.redirect_stderr(log_buffer):
                 build_index.main()
+            refresh_knowledge_index_state()
             st.code(log_buffer.getvalue() or "索引构建完成。", language="text")
             st.success("知识库索引已更新")
+            st.rerun()
         except Exception as exc:
             st.code(log_buffer.getvalue(), language="text")
             st.warning(f"知识库索引更新失败：{exc}")
@@ -4318,7 +4337,8 @@ def render_admin_knowledge_management() -> None:
     """渲染知识库管理区。"""
     chroma_dir = runtime_paths.data_path("chroma_db")
     chroma_size_mb = get_folder_size(chroma_dir) / (1024 * 1024)
-    st.write(f"知识库状态：{'已存在' if chroma_dir.exists() else '未构建'}，索引文件大小约 {chroma_size_mb:.2f} MB")
+    st.write(f"知识库状态：{'已存在' if rag_engine.LOCAL_VECTORSTORE_FILE.exists() else '未构建'}，索引文件大小约 {chroma_size_mb:.2f} MB")
+    st.caption(f"索引文件：{rag_engine.LOCAL_VECTORSTORE_FILE}")
 
     st.markdown("配置加载状态：")
     for file_path in get_expected_config_files():
