@@ -22,6 +22,22 @@ from config_loader import get_agent_prompt, get_system_prompt
 logger = logging.getLogger(__name__)
 
 
+def is_timeout_exception(exc: Exception) -> bool:
+    """判断是否为外部模型接口超时，避免把长 traceback 暴露给前台。"""
+    text = f"{exc.__class__.__name__}: {exc}"
+    return "Timeout" in text or "timed out" in text.lower()
+
+
+def format_task_error(exc: Exception) -> str:
+    """将底层异常压缩为用户可读的任务错误。"""
+    if is_timeout_exception(exc):
+        return (
+            "模型响应超时：本次请求已发送到 API，但报告生成或回传超过了本地等待时间。"
+            "建议缩短输入内容、拆成更小的工作流步骤，或稍后重试。"
+        )
+    return str(exc)
+
+
 class Orchestrator:
     """AI 运营分身的核心业务编排器。"""
 
@@ -125,12 +141,15 @@ class Orchestrator:
                 "error": "",
             }
         except Exception as exc:
-            logger.exception("Agent task failed: task_key=%s", task_key)
+            if is_timeout_exception(exc):
+                logger.warning("Agent task timed out: task_key=%s error=%s", task_key, exc)
+            else:
+                logger.exception("Agent task failed: task_key=%s", task_key)
             return {
                 "success": False,
                 "content": "",
                 "intent": task_key,
-                "error": str(exc),
+                "error": format_task_error(exc),
             }
 
     def run_version_analysis(self, announcement_text: str, system_prompt: str = "") -> dict[str, Any]:

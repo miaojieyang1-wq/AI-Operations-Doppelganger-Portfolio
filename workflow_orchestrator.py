@@ -262,16 +262,25 @@ def _normalize_dag(raw_dag: list[Any]) -> list[dict[str, Any]]:
 def _execute_step_safely(step: dict[str, Any], source_content: str, orchestrator: Any) -> dict[str, Any]:
     try:
         result = _execute_step(step, source_content, orchestrator)
+        success = bool(result.get("success", True))
+        error = str(result.get("error", ""))
+        content = _extract_result_content(result)
+        if not success and not content.strip():
+            content = _build_failure_content(step, error)
         return _build_step_result(
             step,
-            success=bool(result.get("success", True)),
-            content=_extract_result_content(result),
-            error=str(result.get("error", "")),
+            success=success,
+            content=content,
+            error=error,
             raw=result,
         )
     except Exception as exc:
-        logger.exception("Workflow step failed: step=%s module=%s", step.get("step"), step.get("module", ""))
-        return _build_step_result(step, success=False, content="", error=str(exc))
+        error = _format_workflow_error(exc)
+        if _is_timeout_error(exc):
+            logger.warning("Workflow step timed out: step=%s module=%s error=%s", step.get("step"), step.get("module", ""), exc)
+        else:
+            logger.exception("Workflow step failed: step=%s module=%s", step.get("step"), step.get("module", ""))
+        return _build_step_result(step, success=False, content=_build_failure_content(step, error), error=error)
 
 
 def _execute_step(step: dict[str, Any], source_content: str, orchestrator: Any) -> dict[str, Any]:
@@ -325,6 +334,39 @@ def _extract_result_content(result: dict[str, Any]) -> str:
     if "coordinator_result" in result:
         return str(result.get("coordinator_result", ""))
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def _is_timeout_error(exc: Exception) -> bool:
+    text = f"{exc.__class__.__name__}: {exc}"
+    return "Timeout" in text or "timed out" in text.lower()
+
+
+def _format_workflow_error(exc: Exception) -> str:
+    if _is_timeout_error(exc):
+        return (
+            "模型响应超时：请求已到达 API，但生成或回传超过了本地等待时间。"
+            "建议缩短输入、拆分步骤或稍后重试。"
+        )
+    return str(exc)
+
+
+def _build_failure_content(step: dict[str, Any], error: str) -> str:
+    module = str(step.get("module", "当前模块") or "当前模块")
+    action = str(step.get("action", "") or "")
+    lines = [
+        f"{module}未能完成。",
+        "",
+        f"失败原因：{error or '未知错误'}",
+    ]
+    if action:
+        lines.extend(["", f"原计划动作：{action}"])
+    lines.extend(
+        [
+            "",
+            "处理建议：可以缩短输入文本、减少单次工作流步骤，或稍后重新执行该步骤。",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _build_step_result(

@@ -28,7 +28,7 @@ DEFAULT_APP_CONFIG: dict[str, Any] = {
         "collaboration_coordinator_temperature": 0.5,
         "connection_test_temperature": 0,
         "connect_timeout_seconds": 5,
-        "read_timeout_seconds": 30,
+        "read_timeout_seconds": 120,
         "max_retries": 2,
     },
     "paths": {
