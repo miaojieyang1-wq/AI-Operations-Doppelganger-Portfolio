@@ -130,6 +130,20 @@ def test_workflow_dependency_context_trim() -> None:
     assert "中间内容已压缩" in trimmed
 
 
+def test_workflow_dag_dependency_repair() -> None:
+    """模型返回乱序或非法依赖时，应自动修复为可执行 DAG。"""
+    import workflow_orchestrator
+
+    raw_dag = [
+        {"step": 20, "module": "竞品雷达", "action": "对比竞品", "input_from": "step_99", "params": {}},
+        {"step": 10, "module": "版本分析", "action": "分析版本", "input_from": "step_20", "params": {}},
+    ]
+    dag = workflow_orchestrator._normalize_dag(raw_dag)
+    assert [step["step"] for step in dag] == [1, 2]
+    assert dag[0]["input_from"] == "user_input"
+    assert dag[1]["input_from"] == "step_1"
+
+
 def main() -> int:
     """执行冒烟测试。"""
     setup_test_env()
@@ -141,6 +155,7 @@ def main() -> int:
         ("workflow_fast_planning", test_workflow_fast_planning),
         ("workflow_planning_fallback", test_workflow_planning_fallback),
         ("workflow_dependency_context_trim", test_workflow_dependency_context_trim),
+        ("workflow_dag_dependency_repair", test_workflow_dag_dependency_repair),
     ]
     results = [run_case(name, func) for name, func in cases]
     return 0 if all(results) else 1

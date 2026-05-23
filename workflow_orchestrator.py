@@ -315,7 +315,49 @@ def _normalize_dag(raw_dag: list[Any]) -> list[dict[str, Any]]:
                 "params": params if isinstance(params, dict) else {},
             }
         )
-    return sorted(dag or DEFAULT_DAG, key=_step_number)
+    return _repair_dag_dependencies(sorted(dag or DEFAULT_DAG, key=_step_number))
+
+
+def _repair_dag_dependencies(dag: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """重编号并修复非法依赖，避免模型输出的 DAG 自身不可执行。"""
+    repaired: list[dict[str, Any]] = []
+    original_to_new: dict[int, int] = {}
+    for new_step, step in enumerate(dag, start=1):
+        original_step = _step_number(step)
+        if original_step:
+            original_to_new[original_step] = new_step
+        repaired_step = dict(step)
+        repaired_step["step"] = new_step
+        repaired.append(repaired_step)
+
+    available_steps: set[int] = set()
+    for index, step in enumerate(repaired, start=1):
+        input_from = str(step.get("input_from", "user_input") or "user_input").strip()
+        step["input_from"] = _repair_input_from(input_from, index, available_steps, original_to_new)
+        available_steps.add(index)
+    return repaired
+
+
+def _repair_input_from(
+    input_from: str,
+    current_step: int,
+    available_steps: set[int],
+    original_to_new: dict[int, int],
+) -> str:
+    """将非法 input_from 修复为可执行来源。"""
+    if input_from == "user_input":
+        return "user_input"
+    match = re.fullmatch(r"step_(\d+)", input_from)
+    if match:
+        requested = int(match.group(1))
+        remapped = original_to_new.get(requested, requested)
+        if remapped in available_steps and remapped < current_step:
+            return f"step_{remapped}"
+        return "user_input" if current_step == 1 else f"step_{current_step - 1}"
+    executed_match = re.fullmatch(r"executed_step_(\d+)", input_from)
+    if executed_match:
+        return input_from
+    return "user_input"
 
 
 def _build_fast_dag(instruction: str) -> list[dict[str, Any]]:
