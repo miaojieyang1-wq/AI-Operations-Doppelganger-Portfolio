@@ -2421,6 +2421,16 @@ def render_workflow_motion_styles() -> None:
             margin: 0.85rem 0;
             animation: workflowPulse 1.5s ease-in-out infinite;
         }
+        .workflow-wait-note {
+            border-left: 4px solid #2563eb;
+            background: #f8fbff;
+            color: #344054;
+            border-radius: 8px;
+            padding: 0.78rem 0.95rem;
+            margin: 0.75rem 0;
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }
         .workflow-card {
             position: relative;
             border: 1px solid #e5e7eb;
@@ -2557,6 +2567,16 @@ def render_workflow_motion_styles() -> None:
             animation: workflowSpin 0.8s linear infinite;
             display: inline-block;
         }
+        .workflow-card-result {
+            color: #344054;
+            background: #f8fafc;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 0.84rem;
+            line-height: 1.55;
+            margin-top: 0.65rem;
+            padding: 0.58rem 0.68rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -2579,6 +2599,7 @@ def render_workflow_step_card(
     status: str = "pending",
     delay_index: int = 0,
     overlay: bool = False,
+    result: dict | None = None,
 ) -> None:
     """渲染带动画和状态的工作流步骤卡片。"""
     step_number = int(step.get("step", delay_index + 1) or delay_index + 1)
@@ -2596,6 +2617,10 @@ def render_workflow_step_card(
     running_tip = ""
     if status == "running":
         running_tip = f'<div class="workflow-card-progress"><span class="workflow-spinner"></span>正在调用{module}模块...</div>'
+    result_tip = ""
+    if status == "completed":
+        content = summarize_workflow_result(result)
+        result_tip = f'<div class="workflow-card-result">{html.escape(content)}</div>'
     st.markdown(
         f"""
         <div class="workflow-card {status_class} {overlay_class}" style="--workflow-delay:{delay_index * 0.24:.2f}s">
@@ -2604,10 +2629,24 @@ def render_workflow_step_card(
             <div class="workflow-card-action">{action}</div>
             <span class="workflow-source-tag {source_class}">{html.escape(source_label)}</span>
             {running_tip}
+            {result_tip}
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def summarize_workflow_result(result: dict | None, limit: int = 120) -> str:
+    """提取步骤结果摘要，让完成状态更可感知。"""
+    if not result:
+        return "已完成。"
+    content = str(result.get("content", "") or "").strip()
+    if not content:
+        return "已完成。"
+    compact = re.sub(r"\s+", " ", content)
+    if len(compact) > limit:
+        compact = compact[:limit].rstrip() + "..."
+    return f"已完成：{compact}"
 
 
 def render_workflow_dag_preview(dag: list[dict]) -> None:
@@ -2684,6 +2723,7 @@ def render_current_instruction_flow() -> None:
             status=status,
             delay_index=index - 1,
             overlay=replanning and not result,
+            result=result,
         )
 
     for item in revision_history[-1:]:
@@ -2772,6 +2812,92 @@ def revise_interactive_workflow_state(state: dict, revision_instruction: str) ->
     return state
 
 
+def build_static_workflow_state(instruction: str, dag: list[dict]) -> dict:
+    """创建静态工作流的逐步执行状态。"""
+    return {
+        "instruction": instruction,
+        "dag": dag,
+        "executed_results": {},
+        "current_step_index": 0,
+        "status": "running",
+        "started_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+
+
+def execute_next_static_workflow_step(state: dict) -> dict:
+    """静态模式下每次只执行一个步骤，让前端能逐步刷新完成状态。"""
+    dag = state.get("dag", [])
+    current_index = int(state.get("current_step_index", 0) or 0)
+    if current_index >= len(dag):
+        state["status"] = "completed"
+        return state
+
+    step = dag[current_index]
+    results = execute_dag(
+        [step],
+        {
+            "user_input": state.get("instruction", ""),
+            "_executed_results": state.get("executed_results", {}),
+        },
+        ORCHESTRATOR,
+    )
+    state["executed_results"].update(results)
+    state["current_step_index"] = current_index + 1
+    state["status"] = "completed" if state["current_step_index"] >= len(dag) else "running"
+    return state
+
+
+def render_static_workflow_state(state: dict) -> None:
+    """展示静态工作流的逐步执行过程。"""
+    dag = state.get("dag", [])
+    if not dag:
+        return
+
+    current_index = int(state.get("current_step_index", 0) or 0)
+    status = str(state.get("status", "idle"))
+    running_step = current_index + 1 if status == "running" and current_index < len(dag) else None
+    progress_value = min(1.0, current_index / max(len(dag), 1))
+    status_text = "执行完成" if status == "completed" else f"正在执行第{running_step}步"
+
+    st.markdown(
+        f"""
+        <div class="workflow-status-bar">
+            <span>当前工作流进度：步骤 {current_index} / 总共 {len(dag)} 步</span>
+            <span>当前状态：{html.escape(status_text)}</span>
+            <span>开始时间：{html.escape(str(state.get('started_at', '')))}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.progress(progress_value)
+    if status == "running":
+        st.markdown(
+            '<div class="workflow-wait-note">正在调用模型生成当前步骤结果，请耐心等待。较长输入或复杂报告可能需要几十秒，完成后会自动进入下一步。</div>',
+            unsafe_allow_html=True,
+        )
+
+    executed_results = state.get("executed_results", {})
+    for index, step in enumerate(dag):
+        step_number = int(step.get("step", index + 1) or index + 1)
+        result = executed_results.get(step_number) or executed_results.get(str(step_number), {})
+        card_status = "pending"
+        if result:
+            card_status = "completed" if result.get("success") else "discarded"
+        elif running_step == index + 1:
+            card_status = "running"
+        render_workflow_step_card(step, status=card_status, delay_index=index, result=result)
+
+    if status == "running":
+        st.session_state.nl_static_workflow_state = execute_next_static_workflow_step(state)
+        if st.session_state.nl_static_workflow_state.get("status") == "completed":
+            st.session_state.nl_workflow_result = format_dag_result(
+                dag,
+                st.session_state.nl_static_workflow_state.get("executed_results", {}),
+            )
+        time.sleep(0.5)
+        st.rerun()
+
+
 def render_interactive_workflow_state(state: dict) -> None:
     """展示交互式工作流进度和中间结果。"""
     final_dag = state.get("final_dag", [])
@@ -2830,12 +2956,14 @@ def render_natural_language_orchestration() -> None:
         else:
             thinking_slot = st.empty()
             thinking_slot.markdown(
-                '<div class="workflow-thinking-card">正在分析你的需求...</div>',
+                '<div class="workflow-thinking-card">正在分析你的需求，请耐心等待...</div>',
                 unsafe_allow_html=True,
             )
             try:
                 st.session_state.nl_workflow_dag = parse_intent_to_dag(instruction)
+                st.session_state.nl_workflow_generated_instruction = instruction
                 st.session_state.nl_workflow_result = ""
+                st.session_state.nl_static_workflow_state = {}
                 st.session_state.nl_workflow_interactive_state = {
                     "original_instruction": "",
                     "initial_dag": [],
@@ -2852,31 +2980,32 @@ def render_natural_language_orchestration() -> None:
                 st.warning(f"工作流生成失败：{exc}")
 
     dag = st.session_state.get("nl_workflow_dag", [])
-    render_workflow_dag_preview(dag)
+    generated_instruction = st.session_state.get("nl_workflow_generated_instruction", "")
+    instruction_changed = bool(dag) and instruction.strip() != str(generated_instruction or "").strip()
+    if instruction_changed:
+        st.warning("当前输入已修改，请先重新生成工作流，再执行新的流程。")
+        st.session_state.nl_static_workflow_state = {}
+        st.session_state.nl_workflow_result = ""
 
-    if workflow_mode == "静态编排" and dag and st.button("执行工作流", use_container_width=True, key="execute_nl_workflow"):
-        progress = st.progress(0)
-        progress.progress(0.15)
-        running_preview = st.empty()
-        try:
-            first_step = dag[0] if dag else {}
-            st.session_state.nl_workflow_running_step = int(first_step.get("step", 1) or 1)
-            with running_preview.container():
-                for index, step in enumerate(dag):
-                    status = "running" if index == 0 else "pending"
-                    render_workflow_step_card(step, status=status, delay_index=index)
-            results = execute_dag(dag, {"user_input": instruction}, ORCHESTRATOR)
-            progress.progress(0.85)
-            st.session_state.nl_workflow_result = format_dag_result(dag, results)
-            st.session_state.nl_workflow_running_step = None
-            running_preview.empty()
-            progress.progress(1.0)
+    static_state = st.session_state.get("nl_static_workflow_state", {})
+    if not static_state or static_state.get("status") == "idle":
+        render_workflow_dag_preview(dag)
+
+    if workflow_mode == "静态编排" and dag and st.button(
+        "执行工作流",
+        use_container_width=True,
+        key="execute_nl_workflow",
+        disabled=instruction_changed,
+    ):
+        st.session_state.nl_workflow_result = ""
+        st.session_state.nl_static_workflow_state = build_static_workflow_state(generated_instruction or instruction, dag)
+        st.rerun()
+
+    static_state = st.session_state.get("nl_static_workflow_state", {})
+    if workflow_mode == "静态编排" and static_state:
+        render_static_workflow_state(static_state)
+        if static_state.get("status") == "completed":
             st.success("工作流执行完成。")
-        except Exception as exc:
-            st.session_state.nl_workflow_running_step = None
-            running_preview.empty()
-            progress.empty()
-            st.warning(f"工作流执行失败：{exc}")
 
     result = st.session_state.get("nl_workflow_result", "")
     if result:
@@ -2885,12 +3014,24 @@ def render_natural_language_orchestration() -> None:
         st.text_area("复制工作流报告", value=result, height=220, key="nl_workflow_copy")
 
     if workflow_mode == "交互式执行":
-        if dag and st.button("交互式执行", use_container_width=True, key="start_interactive_workflow"):
+        if dag and st.button(
+            "交互式执行",
+            use_container_width=True,
+            key="start_interactive_workflow",
+            disabled=instruction_changed,
+        ):
             if not instruction.strip():
                 st.warning("请先输入运营分析需求。")
             else:
-                with st.spinner("正在启动交互式工作流..."):
-                    st.session_state.nl_workflow_interactive_state = execute_dag_interactively(instruction, ORCHESTRATOR)
+                st.session_state.nl_workflow_interactive_state = {
+                    "original_instruction": generated_instruction or instruction,
+                    "initial_dag": dag,
+                    "final_dag": dag,
+                    "executed_results": {},
+                    "revision_history": [],
+                    "current_step_index": 0,
+                    "status": "waiting" if dag else "idle",
+                }
                 st.rerun()
 
         state = get_interactive_workflow_state()
@@ -2911,6 +3052,7 @@ def render_natural_language_orchestration() -> None:
                         final_dag = state.get("final_dag", [])
                         if next_index < len(final_dag):
                             st.session_state.nl_workflow_running_step = int(final_dag[next_index].get("step", next_index + 1) or next_index + 1)
+                        st.info("正在调用模型生成当前步骤结果，请耐心等待。")
                         st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
                         st.session_state.nl_workflow_running_step = None
                         st.rerun()
@@ -2923,6 +3065,7 @@ def render_natural_language_orchestration() -> None:
                         final_dag = state.get("final_dag", [])
                         if next_index < len(final_dag):
                             st.session_state.nl_workflow_running_step = int(final_dag[next_index].get("step", next_index + 1) or next_index + 1)
+                        st.info("正在调用模型生成当前步骤结果，请耐心等待。")
                         st.session_state.nl_workflow_interactive_state = execute_next_interactive_workflow_step(state)
                         st.session_state.nl_workflow_running_step = None
                         st.rerun()

@@ -78,7 +78,11 @@ def create_client():
     )
 
 
-def call_chat_completion(messages: list[dict[str, str]], temperature: float | None = None) -> str:
+def call_chat_completion(
+    messages: list[dict[str, str]],
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
     """统一发起聊天模型调用；演示模式下直接返回本地预设结果。"""
     if demo_engine.is_demo_mode():
         system_prompt = "\n".join(message.get("content", "") for message in messages if message.get("role") == "system")
@@ -86,12 +90,15 @@ def call_chat_completion(messages: list[dict[str, str]], temperature: float | No
         return demo_engine.get_demo_response(system_prompt, user_content)
 
     client = create_client()
-    response = client.chat.completions.create(
-        model=get_api_config()["model"],
-        messages=messages,
-        temperature=DEFAULT_TEMPERATURE if temperature is None else temperature,
-        stream=False,
-    )
+    request_kwargs = {
+        "model": get_api_config()["model"],
+        "messages": messages,
+        "temperature": DEFAULT_TEMPERATURE if temperature is None else temperature,
+        "stream": False,
+    }
+    if max_tokens is not None:
+        request_kwargs["max_tokens"] = max_tokens
+    response = client.chat.completions.create(**request_kwargs)
     return response.choices[0].message.content or ""
 
 

@@ -30,6 +30,7 @@ DEFAULT_APP_CONFIG: dict[str, Any] = {
         "connect_timeout_seconds": 5,
         "read_timeout_seconds": 120,
         "max_retries": 2,
+        "workflow_dependency_context_chars": 6000,
     },
     "paths": {
         "works": "works",

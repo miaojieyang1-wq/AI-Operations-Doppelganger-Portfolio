@@ -14,6 +14,8 @@ import config_loader
 
 
 logger = logging.getLogger(__name__)
+APP_CONFIG = config_loader.load_app_config()
+WORKFLOW_DEPENDENCY_CONTEXT_CHARS = int(APP_CONFIG["model"].get("workflow_dependency_context_chars", 6000))
 
 WORKFLOW_SYSTEM_PROMPT = """你是一个工作流编排引擎。用户会用自然语言描述运营分析需求。你需要将用户的需求解析为一系列可执行的步骤，每个步骤对应一个已有的功能模块。
 
@@ -69,6 +71,49 @@ DEFAULT_DAG = [
     }
 ]
 
+FAST_MODULE_RULES = [
+    (
+        "版本分析",
+        ("版本", "公告", "版本公告", "更新说明", "卖点", "宣发", "文案", "内容效果"),
+        "拆解版本公告，提炼核心卖点并生成运营分析报告",
+    ),
+    (
+        "竞品雷达",
+        ("竞品", "对比", "竞品A", "竞品动态", "行业动态", "借鉴"),
+        "对竞品信息进行分类、策略对比和借鉴风险判断",
+    ),
+    (
+        "反馈清洗",
+        ("反馈", "评论", "舆情", "情绪", "玩家声音", "吐槽", "评价"),
+        "清洗玩家反馈，识别情绪、动机、优先级和处理建议",
+    ),
+    (
+        "问卷工坊",
+        ("问卷", "调研", "量表", "题目", "信效度", "预测试"),
+        "基于调研目标生成结构化问卷",
+    ),
+    (
+        "访谈助手",
+        ("访谈", "追问", "访纲", "用户画像", "观察记录"),
+        "基于访谈目标生成结构化访谈提纲和追问预案",
+    ),
+    (
+        "活动策划",
+        ("活动", "玩法", "奖励", "资源量级", "参与路径", "活动目标"),
+        "拆解活动目标并生成活动策划方案",
+    ),
+    (
+        "协作讨论",
+        ("协作", "多角色", "讨论", "协调者", "职能角色", "会审"),
+        "组织多职能角色进行协作讨论并输出综合方案",
+    ),
+    (
+        "自我诊断",
+        ("诊断", "复盘", "自我检查", "质量评估", "能力盲区"),
+        "对已有报告或对话结果进行质量诊断和优化建议输出",
+    ),
+]
+
 
 def parse_intent_to_dag(user_instruction: str) -> list[dict[str, Any]]:
     """把自然语言运营需求解析为已有模块组成的 DAG 步骤列表。"""
@@ -76,14 +121,23 @@ def parse_intent_to_dag(user_instruction: str) -> list[dict[str, Any]]:
     if not instruction:
         return []
 
-    response = api_runtime.call_chat_completion(
-        [
-            {"role": "system", "content": WORKFLOW_SYSTEM_PROMPT},
-            {"role": "user", "content": instruction},
-        ],
-        temperature=0,
-    )
-    return _normalize_dag(_parse_json_array(response))
+    fast_dag = _build_fast_dag(instruction)
+    if fast_dag:
+        return fast_dag
+
+    try:
+        response = api_runtime.call_chat_completion(
+            [
+                {"role": "system", "content": WORKFLOW_SYSTEM_PROMPT},
+                {"role": "user", "content": instruction},
+            ],
+            temperature=0,
+            max_tokens=900,
+        )
+        return _normalize_dag(_parse_json_array(response))
+    except Exception as exc:
+        logger.warning("Workflow planning fell back to default DAG: %s", exc)
+        return _fallback_dag_for_instruction(instruction)
 
 
 def execute_dag(dag: list[dict[str, Any]], user_inputs: str | dict[str, Any], orchestrator: Any) -> dict[int, dict[str, Any]]:
@@ -143,14 +197,19 @@ def revise_dag(
         "revision_instruction": revision_instruction,
         "executed_results": _normalize_result_keys(executed_results),
     }
-    response = api_runtime.call_chat_completion(
-        [
-            {"role": "system", "content": REVISE_DAG_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
-        ],
-        temperature=0,
-    )
-    return _normalize_dag(_parse_json_array(response))
+    try:
+        response = api_runtime.call_chat_completion(
+            [
+                {"role": "system", "content": REVISE_DAG_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+            ],
+            temperature=0,
+            max_tokens=900,
+        )
+        return _normalize_dag(_parse_json_array(response))
+    except Exception as exc:
+        logger.warning("Workflow replanning fell back to original DAG: %s", exc)
+        return _normalize_dag(original_dag or _fallback_dag_for_instruction(revision_instruction))
 
 
 def execute_dag_interactively(user_instruction: str, orchestrator: Any) -> dict[str, Any]:
@@ -259,6 +318,46 @@ def _normalize_dag(raw_dag: list[Any]) -> list[dict[str, Any]]:
     return sorted(dag or DEFAULT_DAG, key=_step_number)
 
 
+def _build_fast_dag(instruction: str) -> list[dict[str, Any]]:
+    """对常见工作流需求做本地轻量解析，减少生成调用链前的等待。"""
+    lowered = instruction.lower()
+    matched: list[tuple[int, str, str]] = []
+    for module, keywords, action in FAST_MODULE_RULES:
+        positions = [lowered.find(keyword.lower()) for keyword in keywords if lowered.find(keyword.lower()) >= 0]
+        if positions:
+            matched.append((min(positions), module, action))
+    if not matched:
+        return []
+
+    ordered_modules: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for _, module, action in sorted(matched, key=lambda item: item[0]):
+        if module not in seen:
+            ordered_modules.append((module, action))
+            seen.add(module)
+
+    if not ordered_modules:
+        return []
+
+    dag: list[dict[str, Any]] = []
+    for index, (module, action) in enumerate(ordered_modules, start=1):
+        dag.append(
+            {
+                "step": index,
+                "module": module,
+                "action": action,
+                "input_from": "user_input" if index == 1 else f"step_{index - 1}",
+                "params": {},
+            }
+        )
+    return dag
+
+
+def _fallback_dag_for_instruction(instruction: str) -> list[dict[str, Any]]:
+    """规划模型不可用时仍返回可执行的保底流程。"""
+    return _build_fast_dag(instruction) or DEFAULT_DAG
+
+
 def _execute_step_safely(step: dict[str, Any], source_content: str, orchestrator: Any) -> dict[str, Any]:
     try:
         result = _execute_step(step, source_content, orchestrator)
@@ -318,7 +417,7 @@ def _resolve_step_input(input_from: str, user_inputs: str | dict[str, Any], resu
     source = results.get(int(match.group(1)))
     if not source or not source.get("success"):
         return None
-    return str(source.get("content", "")).strip()
+    return _trim_dependency_context(str(source.get("content", "")).strip())
 
 
 def _stringify_user_input(user_inputs: str | dict[str, Any]) -> str:
@@ -334,6 +433,21 @@ def _extract_result_content(result: dict[str, Any]) -> str:
     if "coordinator_result" in result:
         return str(result.get("coordinator_result", ""))
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def _trim_dependency_context(content: str) -> str:
+    """限制步骤间传递的上下文长度，避免多步骤链路越来越慢。"""
+    limit = max(1000, WORKFLOW_DEPENDENCY_CONTEXT_CHARS)
+    if len(content) <= limit:
+        return content
+    head_size = int(limit * 0.62)
+    tail_size = limit - head_size
+    omitted = len(content) - head_size - tail_size
+    return (
+        content[:head_size].rstrip()
+        + f"\n\n[中间内容已压缩，省略 {omitted} 字，以提高后续步骤执行速度]\n\n"
+        + content[-tail_size:].lstrip()
+    )
 
 
 def _is_timeout_error(exc: Exception) -> bool:
